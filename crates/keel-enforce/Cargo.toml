@@ -1,0 +1,23 @@
+[package]
+name = "keel-enforce"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Enforce backends for Keel — map Policy to real boundaries"
+rust-version.workspace = true
+
+[dependencies]
+keel-policy = { workspace = true }
+keel-record = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+dunce = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

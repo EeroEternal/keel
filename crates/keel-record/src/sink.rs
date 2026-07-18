@@ -1,0 +1,140 @@
+use crate::event::RecordEvent;
+use async_trait::async_trait;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
+use tokio::sync::Mutex;
+
+#[async_trait]
+pub trait RecordSink: Send + Sync {
+    async fn emit(&self, event: RecordEvent) -> std::io::Result<()>;
+    async fn flush(&self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// In-memory sink for tests and demos.
+#[derive(Default)]
+pub struct MemorySink {
+    events: Mutex<Vec<RecordEvent>>,
+}
+
+impl MemorySink {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub async fn events(&self) -> Vec<RecordEvent> {
+        self.events.lock().await.clone()
+    }
+
+    pub async fn len(&self) -> usize {
+        self.events.lock().await.len()
+    }
+
+    pub async fn is_empty(&self) -> bool {
+        self.events.lock().await.is_empty()
+    }
+}
+
+#[async_trait]
+impl RecordSink for MemorySink {
+    async fn emit(&self, event: RecordEvent) -> std::io::Result<()> {
+        self.events.lock().await.push(event);
+        Ok(())
+    }
+}
+
+/// Append-only JSONL file sink.
+pub struct JsonlSink {
+    path: PathBuf,
+    file: Mutex<tokio::fs::File>,
+}
+
+impl JsonlSink {
+    pub async fn create(path: impl AsRef<Path>) -> std::io::Result<Self> {
+        let path = path.as_ref().to_path_buf();
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .await?;
+        Ok(Self {
+            path,
+            file: Mutex::new(file),
+        })
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[async_trait]
+impl RecordSink for JsonlSink {
+    async fn emit(&self, event: RecordEvent) -> std::io::Result<()> {
+        let mut line = serde_json::to_vec(&event)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        line.push(b'\n');
+        let mut f = self.file.lock().await;
+        f.write_all(&line).await
+    }
+
+    async fn flush(&self) -> std::io::Result<()> {
+        self.file.lock().await.flush().await
+    }
+}
+
+/// Fan-out sink.
+pub struct MultiSink {
+    sinks: Vec<Arc<dyn RecordSink>>,
+}
+
+impl MultiSink {
+    pub fn new(sinks: Vec<Arc<dyn RecordSink>>) -> Self {
+        Self { sinks }
+    }
+}
+
+#[async_trait]
+impl RecordSink for MultiSink {
+    async fn emit(&self, event: RecordEvent) -> std::io::Result<()> {
+        for s in &self.sinks {
+            s.emit(event.clone()).await?;
+        }
+        Ok(())
+    }
+
+    async fn flush(&self) -> std::io::Result<()> {
+        for s in &self.sinks {
+            s.flush().await?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::EventKind;
+    use keel_policy::{PolicyId, SpaceId};
+
+    #[tokio::test]
+    async fn memory_sink_collects() {
+        let sink = MemorySink::new();
+        sink.emit(RecordEvent::new(
+            SpaceId::from_string("spc-1"),
+            PolicyId::from_string("pol-1"),
+            None,
+            EventKind::Note {
+                message: "hi".into(),
+            },
+        ))
+        .await
+        .unwrap();
+        assert_eq!(sink.len().await, 1);
+    }
+}

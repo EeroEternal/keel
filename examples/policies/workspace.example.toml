@@ -1,0 +1,4 @@
+# Example shape — real policies are usually built via keel-policy presets or the builder.
+# Generate one with: keel policy --profile workspace --out workspace.toml
+
+# (This file is illustrative; field names match serde of keel_policy::Policy.)

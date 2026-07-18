@@ -1,0 +1,18 @@
+[package]
+name = "keel-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Execution policy types for Keel — reach, network, credentials, TTL"
+rust-version.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+toml = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
