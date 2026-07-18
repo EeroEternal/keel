@@ -57,7 +57,7 @@ keel run --profile read-only -- echo hello
 | `process-guard` | soft prefix/deny rules | advisory | **done** |
 | `local-process` | Landlock / Seatbelt via **nono** | seccomp on spawn (Linux); parent net kept | **done (v0)** |
 | `local-worktree` | git worktree or `~/.keel/worktrees/` dir | inherits inner backend | **done** |
-| `remote-microvm` | guest FS | guest net policy | planned |
+| `remote-microvm` | guest FS (Firecracker-class) | guest NIC / gateway | **future** — see [`future-remote-microvm.md`](./future-remote-microvm.md) |
 
 ### `local-process` notes
 
@@ -127,8 +127,8 @@ Sinks: `MemorySink`, `JsonlSink`, `MultiSink`.
 3. **v0.2** — isolate_apply children; Linux bwrap read-deny; `~/.keel/spaces/<id>/events.jsonl`
 4. **v0.3** — egress allowlist (CONNECT proxy + ProxyOnly kernel mode)
 5. **v0.4** — worktree backend; per-task `open_task` / `narrow_policy`; JIT credentials
-6. **v0.5** — model-call Consume hooks; remote-microvm backend
-7. **v1** — stable SDK + ACP/session adapters for coding agents
+6. **v0.5+** — model-call Consume hooks; agent SDK / ACP adapters; polish local backends
+7. **Future (not near-term)** — `remote-microvm` (documented only: [`future-remote-microvm.md`](./future-remote-microvm.md))
 
 ### Worktree
 

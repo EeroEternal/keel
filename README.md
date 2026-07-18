@@ -93,7 +93,7 @@ Design notes: [`docs/design.md`](docs/design.md).
 | `process-guard` | Soft FS/exec checks | done |
 | `local-process` | Landlock (Linux) / Seatbelt (macOS) via nono | done |
 | `local-worktree` | Git worktree or directory under `~/.keel/worktrees/` | done |
-| `remote-microvm` | Strong isolation | planned |
+| `remote-microvm` | Guest microVM (stronger isolation) | future — [docs](docs/future-remote-microvm.md) |
 
 ```bash
 # Kernel FS on children only (host stays clean); events under ~/.keel/spaces/
