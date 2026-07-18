@@ -158,6 +158,8 @@ Ship after each phase (or sub-batch) as `0.0.x` with CHANGELOG.
 | 2026-07-18 | Phase 4 (partial) | Proxy destroy on space teardown (existing); CONNECT docs in design/integration |
 | 2026-07-18 | Phase 6 (partial) | `strict_credentials`, `record_violations` on SpaceOptions |
 | 2026-07-18 | Phase 7 (partial) | `docs/integration.md` host embed guide + env table |
+| 2026-07-18 | Phase 5 | `sandbox.toml` load/extends/additive project; CLI `--profile` / `--profile-file` / `profiles` |
+| 2026-07-18 | Phase 4/6 | CONNECT-only egress docs; CLI `--strict-credentials`; violation events |
 
 ---
 

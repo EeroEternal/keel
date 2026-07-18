@@ -1,0 +1,16 @@
+# Example global or project sandbox profile file.
+# Copy to ~/.keel/sandbox.toml and/or <workspace>/.keel/sandbox.toml
+#
+# Project files may only ADD new profile names; they cannot redefine a name
+# already present in the global file.
+
+[profiles.api-dev]
+extends = "workspace"
+network = "allowlist"
+allow_hosts = ["api.x.ai:443", "github.com:443"]
+deny = ["**/.env", "**/*.pem"]
+
+[profiles.review]
+extends = "read-only"
+# restrict_network is implied by read-only preset; can set explicitly:
+# restrict_network = true

@@ -112,7 +112,25 @@ Inspired by common coding-agent sandboxes (e.g. Grok Build):
 | `read-only` | yes | `~/.keel` + temps | deny-all |
 | `strict` | no (system + workspace) | workspace + `~/.keel` + temps | deny-all |
 
-Custom policies: builder API + JSON/TOML serde.
+Custom policies: builder API + JSON/TOML serde, or **`sandbox.toml`** profiles:
+
+```toml
+# ~/.keel/sandbox.toml  (global)
+# <workspace>/.keel/sandbox.toml  (additive names only)
+
+[profiles.api-dev]
+extends = "workspace"
+network = "allowlist"
+allow_hosts = ["api.x.ai:443"]
+deny = ["**/.env"]
+```
+
+CLI: `keel profiles`, `keel policy --profile api-dev`, `keel run --profile api-dev --sandbox -- …`
+
+### Egress proxy limitation
+
+The allowlist proxy implements **HTTP CONNECT** (and minimal absolute-form HTTP).  
+HTTPS tools that honor `HTTPS_PROXY` use CONNECT and are covered. Binaries that ignore proxy env still cannot dial arbitrary hosts when kernel **ProxyOnly** is applied to the child; they can only reach `localhost:<proxy_port>`.
 
 ## Record events
 

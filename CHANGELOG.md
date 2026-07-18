@@ -5,6 +5,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.7] — 2026-07-18
+
+### Added
+
+- **`sandbox.toml` profiles** (Phase 5) — `~/.keel/sandbox.toml` + project `.keel/sandbox.toml` (additive only; no global name clobber); `extends`, `network`, `allow_hosts`, `deny` globs.
+- CLI: `keel profiles`, `--profile <name>`, `--profile-file <path>`, `--strict-credentials`.
+- Example: `examples/sandbox.toml`.
+- SpaceOptions: `strict_credentials`, `record_violations` (deny → `Violation` events).
+- Host guide: `docs/integration.md`; e2e: `tests/e2e_enforce.rs`.
+
+---
+
 ## [0.0.6] — 2026-07-18
 
 ### Added

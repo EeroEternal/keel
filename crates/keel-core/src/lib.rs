@@ -17,9 +17,10 @@ pub use keel_enforce::{
 #[cfg(unix)]
 pub use keel_enforce::{apply_policy_file_and_ready, prepare_kernel};
 pub use keel_policy::{
-    check_egress, narrow_policy, profile_read_only, profile_strict, profile_workspace,
-    CredentialGrant, EgressDecision, ExecPolicy, FsAccess, FsRule, NetworkPolicy, NetworkRule,
-    Policy, PolicyBuilder, PolicyId, SpaceId, TaskId, TaskSpec,
+    check_egress, load_policy_from_sandbox_toml, narrow_policy, profile_read_only, profile_strict,
+    profile_workspace, resolve_policy_with_files, CredentialGrant, EgressDecision, ExecPolicy,
+    FsAccess, FsRule, NetworkPolicy, NetworkRule, Policy, PolicyBuilder, PolicyId, SandboxConfig,
+    SpaceId, TaskId, TaskSpec,
 };
 pub use keel_record::{
     default_space_sink, keel_home, space_dir, space_events_path, space_policy_path, EventKind,

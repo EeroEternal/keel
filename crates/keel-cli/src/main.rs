@@ -3,11 +3,10 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use keel_core::{
-    backend_local_process, backend_process_guard, check_egress, profile_read_only,
-    profile_strict, profile_workspace, worktree_sandboxed, worktree_soft, CredentialGrant,
-    EnforceBackend, LocalProcessBackend, LocalProcessOptions, NetworkPolicy, NetworkRule,
-    NullBackend, Policy, ProcessGuardBackend, Space, SpaceOptions, SpawnRequest, TaskId,
-    WorktreeBackend, WorktreeOptions,
+    backend_local_process, backend_process_guard, check_egress, resolve_policy_with_files,
+    worktree_sandboxed, worktree_soft, CredentialGrant, EnforceBackend, LocalProcessBackend,
+    LocalProcessOptions, NetworkPolicy, NetworkRule, NullBackend, Policy, ProcessGuardBackend,
+    SandboxConfig, Space, SpaceOptions, SpawnRequest, TaskId, WorktreeBackend, WorktreeOptions,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,19 +27,30 @@ struct Cli {
 enum Commands {
     /// Print version and backend inventory.
     Info,
-    /// Build and print a preset policy as JSON.
+    /// Build and print a policy as JSON (built-in or sandbox.toml name).
     Policy {
-        #[arg(long, value_enum, default_value_t = Profile::Workspace)]
-        profile: Profile,
+        /// Built-in profile name, or custom name from sandbox.toml.
+        #[arg(long, default_value = "workspace")]
+        profile: String,
         #[arg(long)]
         workspace: Option<PathBuf>,
+        /// Load a single profile TOML/JSON file instead of named lookup.
+        #[arg(long)]
+        profile_file: Option<PathBuf>,
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// List profiles from ~/.keel/sandbox.toml and project .keel/sandbox.toml.
+    Profiles {
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+    },
     /// Soft-check whether a path is allowed under a profile.
     Check {
-        #[arg(long, value_enum, default_value_t = Profile::Workspace)]
-        profile: Profile,
+        #[arg(long, default_value = "workspace")]
+        profile: String,
+        #[arg(long)]
+        profile_file: Option<PathBuf>,
         #[arg(long)]
         workspace: Option<PathBuf>,
         path: PathBuf,
@@ -56,9 +66,10 @@ enum Commands {
         /// Destination port.
         #[arg(long, default_value_t = 443)]
         port: u16,
-        /// Use a built-in profile's network section, or override with --allow-host.
-        #[arg(long, value_enum, default_value_t = Profile::Workspace)]
-        profile: Profile,
+        #[arg(long, default_value = "workspace")]
+        profile: String,
+        #[arg(long)]
+        profile_file: Option<PathBuf>,
         #[arg(long)]
         workspace: Option<PathBuf>,
         /// Build an allowlist policy from these hosts (`host` or `host:port`, repeatable).
@@ -70,8 +81,10 @@ enum Commands {
     },
     /// Run a command inside a temporary space (events under ~/.keel/spaces/).
     Run {
-        #[arg(long, value_enum, default_value_t = Profile::Workspace)]
-        profile: Profile,
+        #[arg(long, default_value = "workspace")]
+        profile: String,
+        #[arg(long)]
+        profile_file: Option<PathBuf>,
         #[arg(long)]
         workspace: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = BackendChoice::ProcessGuard)]
@@ -82,6 +95,9 @@ enum Commands {
         /// Do not write ~/.keel/spaces/<id>/events.jsonl.
         #[arg(long)]
         no_persist: bool,
+        /// Fail spawn if a credential source is missing.
+        #[arg(long)]
+        strict_credentials: bool,
         /// Egress allowlist entry (`host` or `host:port`). Repeatable.
         #[arg(long = "allow-host")]
         allow_hosts: Vec<String>,
@@ -117,13 +133,6 @@ enum Commands {
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
-enum Profile {
-    Workspace,
-    ReadOnly,
-    Strict,
-}
-
-#[derive(Debug, Clone, Copy, ValueEnum)]
 enum BackendChoice {
     Null,
     ProcessGuard,
@@ -133,12 +142,16 @@ enum BackendChoice {
     Worktree,
 }
 
-fn build_policy(profile: Profile, workspace: PathBuf) -> Result<Policy> {
-    Ok(match profile {
-        Profile::Workspace => profile_workspace(&workspace)?,
-        Profile::ReadOnly => profile_read_only(&workspace)?,
-        Profile::Strict => profile_strict(&workspace)?,
-    })
+fn build_policy(
+    profile: &str,
+    workspace: &std::path::Path,
+    profile_file: Option<&std::path::Path>,
+) -> Result<Policy> {
+    Ok(resolve_policy_with_files(
+        workspace,
+        Some(profile),
+        profile_file,
+    )?)
 }
 
 fn parse_allow_host(spec: &str) -> Result<NetworkRule> {
@@ -241,30 +254,58 @@ async fn main() -> Result<()> {
             );
             println!("local-worktree: git worktree or dir under ~/.keel/worktrees/");
             println!("events: ~/.keel/spaces/<id>/events.jsonl");
-            println!("egress: --allow-host + CONNECT proxy; credentials: --cred NAME=env:VAR");
+            println!("egress: --allow-host + CONNECT proxy (CONNECT-only for HTTPS)");
+            println!("config: ~/.keel/sandbox.toml + <ws>/.keel/sandbox.toml");
+            println!("credentials: --cred NAME=env:VAR ; --strict-credentials");
         }
         Commands::Policy {
             profile,
             workspace,
+            profile_file,
             out,
         } => {
             let ws = workspace.unwrap_or(std::env::current_dir()?);
-            let policy = build_policy(profile, ws)?;
+            let policy = build_policy(&profile, &ws, profile_file.as_deref())?;
             println!("{}", policy.to_json()?);
             if let Some(path) = out {
                 std::fs::write(&path, policy.to_toml()?)
                     .with_context(|| format!("write {}", path.display()))?;
             }
         }
+        Commands::Profiles { workspace } => {
+            let ws = workspace.unwrap_or(std::env::current_dir()?);
+            println!("built-in: workspace, read-only, strict");
+            let cfg = SandboxConfig::load(&ws);
+            if cfg.profiles.is_empty() {
+                println!("custom: (none — add ~/.keel/sandbox.toml)");
+            } else {
+                println!("custom:");
+                for name in cfg.profile_names() {
+                    let ext = cfg
+                        .profiles
+                        .get(&name)
+                        .and_then(|p| p.extends.as_deref())
+                        .unwrap_or("-");
+                    println!("  - {name} (extends: {ext})");
+                }
+            }
+            if !cfg.ignored_project_overrides.is_empty() {
+                println!(
+                    "ignored project overrides: {:?}",
+                    cfg.ignored_project_overrides
+                );
+            }
+        }
         Commands::Check {
             profile,
+            profile_file,
             workspace,
             path,
             write,
             backend,
         } => {
             let ws = workspace.unwrap_or(std::env::current_dir()?);
-            let policy = build_policy(profile, ws)?;
+            let policy = build_policy(&profile, &ws, profile_file.as_deref())?;
             let space = Space::create_with(
                 policy,
                 make_backend(backend),
@@ -292,12 +333,17 @@ async fn main() -> Result<()> {
             host,
             port,
             profile,
+            profile_file,
             workspace,
             allow_hosts,
             deny_all,
         } => {
             let ws = workspace.unwrap_or(std::env::current_dir()?);
-            let policy = apply_network_overrides(build_policy(profile, ws)?, &allow_hosts, deny_all)?;
+            let policy = apply_network_overrides(
+                build_policy(&profile, &ws, profile_file.as_deref())?,
+                &allow_hosts,
+                deny_all,
+            )?;
             let decision = check_egress(&policy.network, &host, port);
             match &decision {
                 keel_core::EgressDecision::Allow => {
@@ -311,10 +357,12 @@ async fn main() -> Result<()> {
         }
         Commands::Run {
             profile,
+            profile_file,
             workspace,
             backend,
             trace,
             no_persist,
+            strict_credentials,
             allow_hosts,
             credentials,
             worktree,
@@ -326,7 +374,7 @@ async fn main() -> Result<()> {
                 bail!("missing command; usage: keel run -- <program> [args...]");
             }
             let ws = workspace.unwrap_or(std::env::current_dir()?);
-            let mut policy = build_policy(profile, ws)?;
+            let mut policy = build_policy(&profile, &ws, profile_file.as_deref())?;
             policy = apply_network_overrides(policy, &allow_hosts, false)?;
             for c in &credentials {
                 policy.credentials.push(parse_cred(c)?);
@@ -351,6 +399,7 @@ async fn main() -> Result<()> {
                     persist_events: !no_persist,
                     memory_events: trace,
                     persist_policy: !no_persist,
+                    strict_credentials,
                     ..Default::default()
                 },
             )

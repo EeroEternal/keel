@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "keel-cli"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "clap",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "keel-core"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "keel-enforce"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "keel-policy"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "chrono",
  "serde",
@@ -1027,12 +1027,13 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+ "tracing",
  "uuid",
 ]
 
 [[package]]
 name = "keel-record"
-version = "0.0.6"
+version = "0.0.7"
 dependencies = [
  "async-trait",
  "chrono",

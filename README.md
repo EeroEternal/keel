@@ -20,8 +20,8 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.6** — see [CHANGELOG.md](CHANGELOG.md) and [optimization plan](docs/optimization-plan.md).  
-Composition (`--worktree --sandbox`), deny globs, plus prior execution-layer stack. `remote-microvm` remains docs-only future work.
+**v0.0.7** — see [CHANGELOG.md](CHANGELOG.md) and [optimization plan](docs/optimization-plan.md).  
+`sandbox.toml` profiles, composition (`--worktree --sandbox`), deny globs, egress allowlist, worktree, credentials.
 
 ## Quick start
 
