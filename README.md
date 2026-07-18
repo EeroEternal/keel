@@ -20,7 +20,8 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.4** — worktree backend, JIT credentials, per-task policy narrowing, plus egress allowlist / isolated apply / bwrap / space event logs.
+**v0.0.5** — local execution layer focus; see [CHANGELOG.md](CHANGELOG.md).  
+Worktree, JIT credentials, per-task narrowing, egress allowlist, isolated child apply, bwrap read-deny, space event logs. `remote-microvm` is docs-only future work.
 
 ## Quick start
 
