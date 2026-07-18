@@ -8,10 +8,12 @@
 //!   Linux read-deny uses bubblewrap bind-over.
 
 mod backend;
+mod credentials;
 mod egress_proxy;
 mod error;
 mod null;
 mod process_guard;
+mod worktree;
 
 #[cfg(all(unix, feature = "kernel"))]
 mod child_net;
@@ -26,11 +28,16 @@ mod bwrap;
 mod local_process;
 
 pub use backend::{BackendInfo, EnforceBackend, SpawnRequest, SpawnedProcess};
+pub use credentials::{
+    grant_names, inject_into_env, resolve_credentials, revoke_resolved, CredentialSourceKind,
+    ResolvedCredential,
+};
 pub use egress_proxy::{EgressProxy, EGRESS_PROXY_PORT_ENV};
 pub use error::{EnforceError, EnforceResult};
 pub use local_process::{LocalProcessBackend, LocalProcessOptions};
 pub use null::NullBackend;
 pub use process_guard::ProcessGuardBackend;
+pub use worktree::{WorktreeBackend, WorktreeOptions};
 
 #[cfg(all(unix, feature = "kernel"))]
 pub use map_caps::{policy_to_capability_set, MapOptions};

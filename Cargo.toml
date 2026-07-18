@@ -10,7 +10,7 @@ members = [
 default-members = ["crates/keel-cli"]
 
 [workspace.package]
-version = "0.0.3"
+version = "0.0.4"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/EeroEternal/keel"

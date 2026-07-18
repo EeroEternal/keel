@@ -6,16 +6,16 @@
 mod egress;
 mod error;
 mod ids;
+mod narrow;
 mod net;
 mod paths;
 mod policy;
 mod presets;
 
-pub use egress::{
-    allowlist_ports, check_egress, host_matches, EgressDecision,
-};
+pub use egress::{allowlist_ports, check_egress, host_matches, EgressDecision};
 pub use error::{PolicyError, PolicyResult};
 pub use ids::{PolicyId, SpaceId, TaskId};
+pub use narrow::{narrow_policy, TaskSpec};
 pub use net::{NetworkPolicy, NetworkRule};
 pub use paths::{FsAccess, FsRule, PathPattern};
 pub use policy::{CredentialGrant, ExecPolicy, Policy, PolicyBuilder};

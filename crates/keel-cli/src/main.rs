@@ -3,9 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use keel_core::{
-    check_egress, profile_read_only, profile_strict, profile_workspace, EnforceBackend,
-    LocalProcessBackend, NetworkPolicy, NetworkRule, NullBackend, Policy, ProcessGuardBackend,
-    Space, SpaceOptions, SpawnRequest,
+    check_egress, profile_read_only, profile_strict, profile_workspace, CredentialGrant,
+    EnforceBackend, LocalProcessBackend, NetworkPolicy, NetworkRule, NullBackend, Policy,
+    ProcessGuardBackend, Space, SpaceOptions, SpawnRequest, TaskId, WorktreeBackend,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -83,6 +83,15 @@ enum Commands {
         /// Egress allowlist entry (`host` or `host:port`). Repeatable.
         #[arg(long = "allow-host")]
         allow_hosts: Vec<String>,
+        /// Inject a credential: `NAME=env:VAR` or `NAME=file:PATH` (repeatable).
+        #[arg(long = "cred")]
+        credentials: Vec<String>,
+        /// Run inside a worktree of the workspace (implies worktree backend).
+        #[arg(long)]
+        worktree: bool,
+        /// Bind a task id (recorded on policy / events).
+        #[arg(long)]
+        task_id: Option<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         cmd: Vec<String>,
     },
@@ -114,6 +123,8 @@ enum BackendChoice {
     ProcessGuard,
     /// Landlock/Seatbelt; children sandboxed by default (host stays clean).
     LocalProcess,
+    /// Isolated git worktree or directory under ~/.keel/worktrees/.
+    Worktree,
 }
 
 fn build_policy(profile: Profile, workspace: PathBuf) -> Result<Policy> {
@@ -157,7 +168,19 @@ fn make_backend(choice: BackendChoice) -> Arc<dyn keel_core::EnforceBackend> {
         BackendChoice::Null => Arc::new(NullBackend::new()),
         BackendChoice::ProcessGuard => Arc::new(ProcessGuardBackend::new()),
         BackendChoice::LocalProcess => Arc::new(LocalProcessBackend::new()),
+        BackendChoice::Worktree => Arc::new(WorktreeBackend::new()),
     }
+}
+
+fn parse_cred(spec: &str) -> Result<CredentialGrant> {
+    let (name, source) = spec.split_once('=').ok_or_else(|| {
+        anyhow::anyhow!("--cred expects NAME=env:VAR or NAME=file:PATH, got {spec}")
+    })?;
+    Ok(CredentialGrant {
+        name: name.to_string(),
+        source: source.to_string(),
+        inject_as_env: Some(name.to_string()),
+    })
 }
 
 #[tokio::main]
@@ -176,6 +199,7 @@ async fn main() -> Result<()> {
                 NullBackend::new().info(),
                 ProcessGuardBackend::new().info(),
                 LocalProcessBackend::new().info(),
+                WorktreeBackend::new().info(),
             ] {
                 println!(
                     "  - {:<16} kernel_fs={} child_network={}",
@@ -186,7 +210,9 @@ async fn main() -> Result<()> {
             println!(
                 "local-process: isolate_apply=true (host clean; children get Landlock/Seatbelt)"
             );
+            println!("local-worktree: git worktree or dir under ~/.keel/worktrees/");
             println!("events: ~/.keel/spaces/<id>/events.jsonl");
+            println!("egress: --allow-host + CONNECT proxy; credentials: --cred NAME=env:VAR");
         }
         Commands::Policy {
             profile,
@@ -260,6 +286,9 @@ async fn main() -> Result<()> {
             trace,
             no_persist,
             allow_hosts,
+            credentials,
+            worktree,
+            task_id,
             cmd,
         } => {
             if cmd.is_empty() {
@@ -268,13 +297,23 @@ async fn main() -> Result<()> {
             let ws = workspace.unwrap_or(std::env::current_dir()?);
             let mut policy = build_policy(profile, ws)?;
             policy = apply_network_overrides(policy, &allow_hosts, false)?;
-            // Allowlist works best with local-process (proxy + ProxyOnly).
-            let backend = if !allow_hosts.is_empty() && matches!(backend, BackendChoice::ProcessGuard | BackendChoice::Null) {
+            for c in &credentials {
+                policy.credentials.push(parse_cred(c)?);
+            }
+            if let Some(tid) = task_id {
+                policy.task_id = Some(TaskId::from_string(tid));
+            }
+
+            let mut backend = backend;
+            if worktree {
+                backend = BackendChoice::Worktree;
+            } else if !allow_hosts.is_empty()
+                && matches!(backend, BackendChoice::ProcessGuard | BackendChoice::Null)
+            {
                 eprintln!("keel: --allow-host set; using local-process backend for egress proxy");
-                BackendChoice::LocalProcess
-            } else {
-                backend
-            };
+                backend = BackendChoice::LocalProcess;
+            }
+
             let space = Space::create_with(
                 policy,
                 make_backend(backend),

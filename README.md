@@ -20,7 +20,7 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.3** — **egress allowlist** (CONNECT proxy + kernel ProxyOnly), plus isolated child apply, Linux bwrap read-deny, and `~/.keel/spaces/<id>/events.jsonl`.
+**v0.0.4** — worktree backend, JIT credentials, per-task policy narrowing, plus egress allowlist / isolated apply / bwrap / space event logs.
 
 ## Quick start
 
@@ -92,7 +92,7 @@ Design notes: [`docs/design.md`](docs/design.md).
 | `null` | Record + accept policy | done |
 | `process-guard` | Soft FS/exec checks | done |
 | `local-process` | Landlock (Linux) / Seatbelt (macOS) via nono | done |
-| `local-worktree` | Git worktree / overlay | planned |
+| `local-worktree` | Git worktree or directory under `~/.keel/worktrees/` | done |
 | `remote-microvm` | Strong isolation | planned |
 
 ```bash
@@ -102,7 +102,10 @@ cargo run -p keel-cli -- run --backend local-process --profile workspace -- echo
 # Egress allowlist: only listed hosts (via local CONNECT proxy + ProxyOnly)
 cargo run -p keel-cli -- check-egress evil.com --allow-host api.x.ai:443
 cargo run -p keel-cli -- run --backend local-process --allow-host example.com:80 -- \
-  curl -sI -x "$HTTP_PROXY" http://example.com/   # proxy env injected automatically
+  curl -sI http://example.com/
+
+# Worktree isolation + credential injection
+cargo run -p keel-cli -- run --worktree --cred API_TOKEN=env:MY_TOKEN -- echo ok
 
 # Linux: FS deny paths need bubblewrap for true read-deny
 ```

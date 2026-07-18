@@ -56,7 +56,7 @@ keel run --profile read-only -- echo hello
 | `null` | soft checks only | no | **done** |
 | `process-guard` | soft prefix/deny rules | advisory | **done** |
 | `local-process` | Landlock / Seatbelt via **nono** | seccomp on spawn (Linux); parent net kept | **done (v0)** |
-| `local-worktree` | git worktree / overlay cwd | inherits | planned |
+| `local-worktree` | git worktree or `~/.keel/worktrees/` dir | inherits inner backend | **done** |
 | `remote-microvm` | guest FS | guest net policy | planned |
 
 ### `local-process` notes
@@ -126,9 +126,35 @@ Sinks: `MemorySink`, `JsonlSink`, `MultiSink`.
 2. **v0.1** — `local-process` Landlock/Seatbelt (nono); child seccomp on Linux
 3. **v0.2** — isolate_apply children; Linux bwrap read-deny; `~/.keel/spaces/<id>/events.jsonl`
 4. **v0.3** — egress allowlist (CONNECT proxy + ProxyOnly kernel mode)
-5. **v0.4** — worktree backend; per-task rebind; credential inject/revoke
-6. **v0.5** — model-call Consume hooks
+5. **v0.4** — worktree backend; per-task `open_task` / `narrow_policy`; JIT credentials
+6. **v0.5** — model-call Consume hooks; remote-microvm backend
 7. **v1** — stable SDK + ACP/session adapters for coding agents
+
+### Worktree
+
+`WorktreeBackend` creates an isolated tree on `apply`:
+
+1. Prefer `git worktree add -b keel/<id> <path> HEAD` when the policy workspace is a git repo.
+2. Else create `~/.keel/worktrees/<id>/` with a `.keel-worktree-origin` pointer.
+3. Spawns default `cwd` into the worktree; soft FS checks remap origin-relative paths.
+4. `destroy` removes the worktree (and deletes the temp branch when git-based).
+
+### Credentials (JIT)
+
+`CredentialGrant { name, source, inject_as_env }`:
+
+- `source`: `env:VAR`, bare `VAR`, or `file:PATH`
+- Resolved at **spawn** (not stored in events); injected into child env
+- `CredentialIssued` / `CredentialRevoked` events record names only
+- CLI: `--cred NAME=env:VAR`
+
+### Per-task rebind
+
+`narrow_policy(parent, TaskSpec)` + `SpaceHandle::open_task`:
+
+- Always creates a **new** space/policy id (parent unchanged)
+- Child may only shrink network, drop credentials, add denies, shorten TTL
+- Expanding reach returns `PolicyError::Invalid`
 
 ## Non-goals
 

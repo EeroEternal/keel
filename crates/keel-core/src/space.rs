@@ -116,8 +116,25 @@ impl SpaceHandle {
         Ok(allowed)
     }
 
-    pub async fn spawn(&self, req: SpawnRequest) -> KeelResult<SpawnedProcess> {
+    pub async fn spawn(&self, mut req: SpawnRequest) -> KeelResult<SpawnedProcess> {
         self.inner.ensure_open().await?;
+        if self.inner.policy.is_expired(Utc::now()) {
+            return Err(keel_enforce::EnforceError::PolicyExpired.into());
+        }
+
+        // JIT credentials: resolve from parent env/files, inject into child env.
+        let resolved = keel_enforce::resolve_credentials(&self.inner.policy, false)?;
+        let issued = keel_enforce::inject_into_env(&mut req.env, &resolved);
+        for name in &issued {
+            self.inner
+                .emit(EventKind::CredentialIssued {
+                    name: name.clone(),
+                })
+                .await?;
+        }
+        // Drop secret material from this task asap (child already has env copy).
+        keel_enforce::revoke_resolved(resolved);
+
         let child = self
             .inner
             .backend
@@ -129,6 +146,30 @@ impl SpaceHandle {
             )
             .await?;
         Ok(child)
+    }
+
+    /// Open a **new** space for a subtask with a policy that can only shrink reach.
+    ///
+    /// This is the per-task rebind primitive: never mutates the parent space.
+    pub async fn open_task(
+        &self,
+        spec: keel_policy::TaskSpec,
+        backend: Arc<dyn EnforceBackend>,
+        opts: SpaceOptions,
+    ) -> KeelResult<SpaceHandle> {
+        self.inner.ensure_open().await?;
+        let child_policy = keel_policy::narrow_policy(&self.inner.policy, spec)?;
+        Space::create_with(child_policy, backend, opts).await
+    }
+
+    /// Convenience: open a task in a git/directory worktree under the parent workspace.
+    pub async fn open_task_in_worktree(
+        &self,
+        spec: keel_policy::TaskSpec,
+        opts: SpaceOptions,
+    ) -> KeelResult<SpaceHandle> {
+        let backend = Arc::new(keel_enforce::WorktreeBackend::new());
+        self.open_task(spec, backend, opts).await
     }
 
     pub async fn run_capture(
@@ -278,11 +319,9 @@ impl Space {
             *st = SpaceState::Destroying;
         }
 
-        for cred in &self.policy.credentials {
+        for name in keel_enforce::grant_names(&self.policy) {
             let _ = self
-                .emit(EventKind::CredentialRevoked {
-                    name: cred.name.clone(),
-                })
+                .emit(EventKind::CredentialRevoked { name })
                 .await;
         }
 
