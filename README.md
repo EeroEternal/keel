@@ -26,7 +26,7 @@ Policy types, record sinks, process-guard backend, `keel` CLI, and design docs l
 ## Quick start
 
 ```bash
-# Requires Rust 1.85+
+# Requires Rust 1.93+
 cargo build -p keel-cli --release
 ./target/release/keel info
 

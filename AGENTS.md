@@ -37,7 +37,7 @@ Keel is the **execution layer under AI agents**: Policy · Enforce · Record · 
 - Prefer targeted `cargo test -p <crate>` / `cargo check -p <crate>`; full workspace builds are fine but slower.
 - Keep the public API small: `Policy`, `Space`, `EnforceBackend`, `RecordSink`.
 - Soft backends (`null`, `process-guard`) are not a security boundary; document that clearly in user-facing text.
-- Match existing Rust style in this tree (edition 2021, workspace deps, Apache-2.0 headers where present).
+- Match existing Rust style in this tree (edition 2024, workspace deps, Apache-2.0 headers where present).
 
 ## Commits
 

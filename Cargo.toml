@@ -11,10 +11,10 @@ default-members = ["crates/keel-cli"]
 
 [workspace.package]
 version = "0.0.1"
-edition = "2021"
+edition = "2024"
 license = "Apache-2.0"
-repository = "https://github.com/xinference/keel"
-rust-version = "1.85"
+repository = "https://github.com/EeroEternal/keel"
+rust-version = "1.93"
 
 [workspace.dependencies]
 keel-policy = { path = "crates/keel-policy" }
@@ -33,7 +33,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 tempfile = "3"
-toml = "0.8"
+toml = "1"
 async-trait = "0.1"
 dirs = "6"
 dunce = "1"
