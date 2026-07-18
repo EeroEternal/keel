@@ -20,7 +20,10 @@ impl Default for NetworkPolicy {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NetworkRule {
-    /// Hostname, IP, or `*` for any host (only meaningful inside an allowlist of other rules).
+    /// Hostname, IP, `*` (any host), or `*.example.com` (subdomains).
+    ///
+    /// Matching is case-insensitive. Cloud metadata hosts / link-local IPs are
+    /// always denied by [`crate::check_egress`] even if listed here.
     pub host: String,
     /// Optional port. `None` means any port on that host.
     #[serde(default, skip_serializing_if = "Option::is_none")]

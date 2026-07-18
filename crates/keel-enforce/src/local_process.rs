@@ -5,7 +5,10 @@
 //! - Host process is **not** sandboxed.
 //! - On `spawn`, the child applies the kernel sandbox in `pre_exec` (after fork).
 //! - On Linux, deny paths are enforced with **bubblewrap** bind-over (read-deny).
-//! - Parent keeps network; `NetworkPolicy::DenyAll` uses child seccomp on Linux.
+//! - Parent keeps network for LLM/MCP.
+//! - `DenyAll`: child net blocked (kernel Blocked / Linux seccomp).
+//! - `Allowlist`: parent runs a localhost CONNECT proxy; children get proxy env
+//!   and kernel `ProxyOnly` so they may only dial the proxy port.
 //!
 //! ## Legacy (`isolate_apply = false`)
 //!
@@ -55,6 +58,8 @@ pub struct LocalProcessBackend {
     opts: LocalProcessOptions,
     applied: AtomicBool,
     restrict_child_net: AtomicBool,
+    /// Active egress proxy when policy is an allowlist.
+    egress: tokio::sync::Mutex<Option<Arc<crate::egress_proxy::EgressProxy>>>,
 }
 
 impl LocalProcessBackend {
@@ -67,6 +72,7 @@ impl LocalProcessBackend {
             opts,
             applied: AtomicBool::new(false),
             restrict_child_net: AtomicBool::new(false),
+            egress: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -199,18 +205,34 @@ impl EnforceBackend for LocalProcessBackend {
     }
 
     async fn destroy(&self, _policy: &Policy, _sink: Arc<dyn RecordSink>) -> EnforceResult<()> {
+        let mut guard = self.egress.lock().await;
+        if let Some(proxy) = guard.take() {
+            proxy.shutdown();
+        }
         Ok(())
     }
 }
 
 #[cfg(all(unix, feature = "kernel"))]
 impl LocalProcessBackend {
-    /// Prepare only: validate mapping; do not touch host process.
+    /// Prepare only: validate mapping; start egress proxy for allowlists.
     async fn apply_isolated_prepare(
         &self,
         policy: &Policy,
         sink: Arc<dyn RecordSink>,
     ) -> EnforceResult<()> {
+        // Start egress proxy before prepare_kernel so ProxyOnly port can be known
+        // at spawn time (injected via env for child pre_exec).
+        let mut egress_note = String::new();
+        if matches!(policy.network, NetworkPolicy::Allowlist(_)) {
+            let proxy =
+                crate::egress_proxy::EgressProxy::start(policy.network.clone()).await?;
+            egress_note = format!("egress proxy on {}", proxy.proxy_url());
+            info!(%egress_note, "started egress allowlist proxy");
+            *self.egress.lock().await = Some(Arc::new(proxy));
+        }
+
+        // prepare_kernel without proxy env still validates FS mapping.
         match sandbox_child::prepare_kernel(policy, self.opts.block_process_network) {
             Ok(()) => {}
             Err(e) if !self.opts.require_kernel => {
@@ -233,6 +255,7 @@ impl LocalProcessBackend {
             }
         }
 
+        // DenyAll → block child net at kernel/seccomp. Allowlist uses ProxyOnly instead.
         if matches!(policy.network, NetworkPolicy::DenyAll) || self.opts.block_process_network {
             self.restrict_child_net.store(true, Ordering::Release);
         }
@@ -242,15 +265,19 @@ impl LocalProcessBackend {
             isolate = true,
             "local-process ready (kernel apply deferred to children)"
         );
+        let msg = if egress_note.is_empty() {
+            "local-process isolate_apply: host unsandboxed; children apply kernel FS".into()
+        } else {
+            format!(
+                "local-process isolate_apply: host unsandboxed; children apply kernel FS; {egress_note}"
+            )
+        };
         let _ = sink
             .emit(RecordEvent::new(
                 SpaceId::from_string("pending"),
                 policy.id.clone(),
                 policy.task_id.clone(),
-                EventKind::Note {
-                    message: "local-process isolate_apply: host unsandboxed; children apply kernel FS"
-                        .into(),
-                },
+                EventKind::Note { message: msg },
             ))
             .await;
         Ok(())
@@ -311,13 +338,29 @@ impl LocalProcessBackend {
     async fn spawn_sandboxed(
         &self,
         policy: &Policy,
-        req: SpawnRequest,
+        mut req: SpawnRequest,
     ) -> EnforceResult<SpawnedProcess> {
+        // Full block only for DenyAll; allowlist uses ProxyOnly + CONNECT proxy.
         let restrict_net = self.restrict_child_net.load(Ordering::Acquire)
             || matches!(policy.network, NetworkPolicy::DenyAll);
         let isolate = self.opts.isolate_apply;
         let block_net = self.opts.block_process_network;
         let require_kernel = self.opts.require_kernel;
+
+        // Inject egress proxy env for allowlisted spaces (proxy-aware tools).
+        let proxy_port = {
+            let guard = self.egress.lock().await;
+            if let Some(proxy) = guard.as_ref() {
+                for (k, v) in proxy.env_vars() {
+                    if !req.env.iter().any(|(ek, _)| ek == &k) {
+                        req.env.push((k, v));
+                    }
+                }
+                Some(proxy.port())
+            } else {
+                None
+            }
+        };
 
         // Validate mapping early (parent).
         if isolate {
@@ -357,6 +400,7 @@ impl LocalProcessBackend {
                     policy_file.clone(),
                     block_net,
                     restrict_net,
+                    proxy_port,
                 );
                 cmd
             } else {
@@ -367,6 +411,7 @@ impl LocalProcessBackend {
                     policy_file.clone(),
                     block_net,
                     restrict_net,
+                    proxy_port,
                 );
                 cmd
             }
@@ -380,6 +425,7 @@ impl LocalProcessBackend {
                 policy_file.clone(),
                 block_net,
                 restrict_net,
+                proxy_port,
             );
             cmd
         };
@@ -402,6 +448,7 @@ fn attach_child_hooks(
     policy_file: Option<std::path::PathBuf>,
     block_net: bool,
     restrict_net: bool,
+    proxy_port: Option<u16>,
 ) {
     // tokio::process::Command::pre_exec requires the Unix CommandExt trait.
     #[allow(unused_imports)]
@@ -410,10 +457,18 @@ fn attach_child_hooks(
         if let Some(pf) = policy_file {
             unsafe {
                 cmd.pre_exec(move || {
+                    if let Some(port) = proxy_port {
+                        // SAFETY: child-only; configures ProxyOnly for apply_kernel_here.
+                        std::env::set_var(
+                            crate::egress_proxy::EGRESS_PROXY_PORT_ENV,
+                            port.to_string(),
+                        );
+                    }
                     match sandbox_child::apply_policy_file_and_ready(&pf, block_net) {
                         Ok(_) => {}
                         Err(e) => return Err(std::io::Error::other(e.to_string())),
                     }
+                    // DenyAll still uses coarse seccomp; allowlist relies on ProxyOnly.
                     if restrict_net {
                         crate::child_net::install_child_network_filter()?;
                     }

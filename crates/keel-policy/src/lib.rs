@@ -3,6 +3,7 @@
 //! Policy is bound before the agent runs and cannot be expanded by the agent.
 //! Enforce backends turn a [`Policy`] into real OS / workspace constraints.
 
+mod egress;
 mod error;
 mod ids;
 mod net;
@@ -10,6 +11,9 @@ mod paths;
 mod policy;
 mod presets;
 
+pub use egress::{
+    allowlist_ports, check_egress, host_matches, EgressDecision,
+};
 pub use error::{PolicyError, PolicyResult};
 pub use ids::{PolicyId, SpaceId, TaskId};
 pub use net::{NetworkPolicy, NetworkRule};

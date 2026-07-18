@@ -98,6 +98,24 @@ impl SpaceHandle {
         Ok(allowed)
     }
 
+    /// Check whether dialing `host:port` is allowed by the space network policy.
+    pub async fn check_egress(&self, host: &str, port: u16) -> KeelResult<bool> {
+        self.inner.ensure_open().await?;
+        if self.inner.policy.is_expired(Utc::now()) {
+            return Err(keel_enforce::EnforceError::PolicyExpired.into());
+        }
+        let decision = keel_policy::check_egress(&self.inner.policy.network, host, port);
+        let allowed = decision.is_allowed();
+        self.inner
+            .emit(EventKind::NetDial {
+                host: host.to_string(),
+                port: Some(port),
+                allowed,
+            })
+            .await?;
+        Ok(allowed)
+    }
+
     pub async fn spawn(&self, req: SpawnRequest) -> KeelResult<SpawnedProcess> {
         self.inner.ensure_open().await?;
         let child = self

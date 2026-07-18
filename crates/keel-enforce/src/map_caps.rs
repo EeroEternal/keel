@@ -2,7 +2,7 @@
 
 use crate::error::{EnforceError, EnforceResult};
 use keel_policy::{NetworkPolicy, Policy};
-use nono::{AccessMode, CapabilitySet};
+use nono::{AccessMode, CapabilitySet, NetworkMode};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 
@@ -35,15 +35,18 @@ const SEATBELT_WRITE_DENY_ACTIONS: &[&str] = &[
 /// Options when mapping policy → kernel capabilities.
 #[derive(Debug, Clone, Copy)]
 pub struct MapOptions {
-    /// If true, block network for the **whole process** (including the agent host).
-    /// Default false: agent keeps LLM connectivity; child deny uses seccomp on Linux.
+    /// If true, force `NetworkMode::Blocked` regardless of policy.
     pub block_process_network: bool,
+    /// When set with an allowlist policy, restrict the process to
+    /// `localhost:proxy_port` only (`NetworkMode::ProxyOnly`).
+    pub egress_proxy_port: Option<u16>,
 }
 
 impl Default for MapOptions {
     fn default() -> Self {
         Self {
             block_process_network: false,
+            egress_proxy_port: None,
         }
     }
 }
@@ -103,18 +106,34 @@ pub fn policy_to_capability_set(policy: &Policy, opts: MapOptions) -> EnforceRes
         apply_deny_path(&mut caps, &path)?;
     }
 
-    // Process-wide network block is opt-in. DenyAll without this flag only
-    // affects children (Linux seccomp) — see LocalProcessBackend::spawn.
+    // Network mode for the sandboxed process (typically the child).
     if opts.block_process_network {
+        caps = caps.block_network();
+    } else {
         match &policy.network {
-            NetworkPolicy::DenyAll | NetworkPolicy::Allowlist(_) | NetworkPolicy::Unrestricted => {
+            NetworkPolicy::Unrestricted => {
+                // AllowAll is nono default.
+            }
+            NetworkPolicy::DenyAll => {
                 caps = caps.block_network();
             }
+            NetworkPolicy::Allowlist(_) => {
+                if let Some(port) = opts.egress_proxy_port {
+                    caps = caps.set_network_mode(NetworkMode::ProxyOnly {
+                        port,
+                        bind_ports: Vec::new(),
+                    });
+                } else {
+                    // Allowlist without a proxy port: do not open unrestricted net
+                    // at the kernel layer; fail soft to Blocked and rely on proxy
+                    // injection when the backend starts one.
+                    warn!(
+                        "allowlist policy mapped without egress_proxy_port; blocking process network"
+                    );
+                    caps = caps.block_network();
+                }
+            }
         }
-    } else if matches!(policy.network, NetworkPolicy::DenyAll) {
-        tracing::debug!(
-            "NetworkPolicy::DenyAll: parent keeps network; children restricted on Linux via seccomp"
-        );
     }
 
     Ok(caps)

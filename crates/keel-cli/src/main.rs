@@ -3,8 +3,9 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use keel_core::{
-    profile_read_only, profile_strict, profile_workspace, EnforceBackend, LocalProcessBackend,
-    NullBackend, Policy, ProcessGuardBackend, Space, SpaceOptions, SpawnRequest,
+    check_egress, profile_read_only, profile_strict, profile_workspace, EnforceBackend,
+    LocalProcessBackend, NetworkPolicy, NetworkRule, NullBackend, Policy, ProcessGuardBackend,
+    Space, SpaceOptions, SpawnRequest,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -46,6 +47,25 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = BackendChoice::ProcessGuard)]
         backend: BackendChoice,
     },
+    /// Check whether dialing host:port is allowed (egress allowlist).
+    CheckEgress {
+        /// Host or IP to dial.
+        host: String,
+        /// Destination port.
+        #[arg(long, default_value_t = 443)]
+        port: u16,
+        /// Use a built-in profile's network section, or override with --allow-host.
+        #[arg(long, value_enum, default_value_t = Profile::Workspace)]
+        profile: Profile,
+        #[arg(long)]
+        workspace: Option<PathBuf>,
+        /// Build an allowlist policy from these hosts (`host` or `host:port`, repeatable).
+        #[arg(long = "allow-host")]
+        allow_hosts: Vec<String>,
+        /// Deny all egress (overrides profile / allow-host).
+        #[arg(long)]
+        deny_all: bool,
+    },
     /// Run a command inside a temporary space (events under ~/.keel/spaces/).
     Run {
         #[arg(long, value_enum, default_value_t = Profile::Workspace)]
@@ -60,6 +80,9 @@ enum Commands {
         /// Do not write ~/.keel/spaces/<id>/events.jsonl.
         #[arg(long)]
         no_persist: bool,
+        /// Egress allowlist entry (`host` or `host:port`). Repeatable.
+        #[arg(long = "allow-host")]
+        allow_hosts: Vec<String>,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         cmd: Vec<String>,
     },
@@ -99,6 +122,34 @@ fn build_policy(profile: Profile, workspace: PathBuf) -> Result<Policy> {
         Profile::ReadOnly => profile_read_only(&workspace)?,
         Profile::Strict => profile_strict(&workspace)?,
     })
+}
+
+fn parse_allow_host(spec: &str) -> Result<NetworkRule> {
+    if let Some((host, port_s)) = spec.rsplit_once(':') {
+        if let Ok(port) = port_s.parse::<u16>() {
+            return Ok(NetworkRule::host_port(host, port));
+        }
+    }
+    Ok(NetworkRule::host(spec))
+}
+
+fn apply_network_overrides(
+    mut policy: Policy,
+    allow_hosts: &[String],
+    deny_all: bool,
+) -> Result<Policy> {
+    if deny_all {
+        policy.network = NetworkPolicy::DenyAll;
+        return Ok(policy);
+    }
+    if !allow_hosts.is_empty() {
+        let mut rules = Vec::new();
+        for h in allow_hosts {
+            rules.push(parse_allow_host(h)?);
+        }
+        policy.network = NetworkPolicy::Allowlist(rules);
+    }
+    Ok(policy)
 }
 
 fn make_backend(choice: BackendChoice) -> Arc<dyn keel_core::EnforceBackend> {
@@ -181,19 +232,49 @@ async fn main() -> Result<()> {
                 std::process::exit(2);
             }
         }
+        Commands::CheckEgress {
+            host,
+            port,
+            profile,
+            workspace,
+            allow_hosts,
+            deny_all,
+        } => {
+            let ws = workspace.unwrap_or(std::env::current_dir()?);
+            let policy = apply_network_overrides(build_policy(profile, ws)?, &allow_hosts, deny_all)?;
+            let decision = check_egress(&policy.network, &host, port);
+            match &decision {
+                keel_core::EgressDecision::Allow => {
+                    println!("egress {host}:{port} → ALLOW");
+                }
+                keel_core::EgressDecision::Deny { reason } => {
+                    println!("egress {host}:{port} → DENY ({reason})");
+                    std::process::exit(2);
+                }
+            }
+        }
         Commands::Run {
             profile,
             workspace,
             backend,
             trace,
             no_persist,
+            allow_hosts,
             cmd,
         } => {
             if cmd.is_empty() {
                 bail!("missing command; usage: keel run -- <program> [args...]");
             }
             let ws = workspace.unwrap_or(std::env::current_dir()?);
-            let policy = build_policy(profile, ws)?;
+            let mut policy = build_policy(profile, ws)?;
+            policy = apply_network_overrides(policy, &allow_hosts, false)?;
+            // Allowlist works best with local-process (proxy + ProxyOnly).
+            let backend = if !allow_hosts.is_empty() && matches!(backend, BackendChoice::ProcessGuard | BackendChoice::Null) {
+                eprintln!("keel: --allow-host set; using local-process backend for egress proxy");
+                BackendChoice::LocalProcess
+            } else {
+                backend
+            };
             let space = Space::create_with(
                 policy,
                 make_backend(backend),

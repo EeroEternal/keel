@@ -69,6 +69,23 @@ keel run --profile read-only -- echo hello
 - Optional host-apply smoke: `KEEL_KERNEL_TEST=1` with `isolate_apply = false`.
 - Dependency: `nono = 0.53.0` (rustc 1.93-compatible).
 
+### Egress allowlist
+
+`NetworkPolicy::Allowlist` is enforced as:
+
+1. **Policy check** — `check_egress(host, port)` (wildcards, port rules; always deny link-local / cloud metadata).
+2. **Localhost CONNECT proxy** — parent starts `EgressProxy`; children get `HTTP(S)_PROXY` / `ALL_PROXY`.
+3. **Kernel ProxyOnly** — sandboxed children may only dial `localhost:<proxy_port>` (Seatbelt / Landlock+seccomp), so direct egress bypass is blocked where the platform supports it.
+
+Tools that ignore proxy env still cannot dial arbitrary hosts when ProxyOnly is applied. Always-denied: `169.254.0.0/16`, `metadata.google.internal`, etc.
+
+CLI:
+
+```bash
+keel check-egress api.x.ai --port 443 --allow-host api.x.ai:443
+keel run --backend local-process --allow-host api.x.ai:443 -- curl -I https://api.x.ai
+```
+
 ### Event persistence
 
 Default space layout:
@@ -108,9 +125,10 @@ Sinks: `MemorySink`, `JsonlSink`, `MultiSink`.
 1. **v0** — types, soft backends, CLI, design
 2. **v0.1** — `local-process` Landlock/Seatbelt (nono); child seccomp on Linux
 3. **v0.2** — isolate_apply children; Linux bwrap read-deny; `~/.keel/spaces/<id>/events.jsonl`
-4. **v0.3** — worktree backend; per-task rebind (new space); credential inject/revoke
-5. **v0.4** — egress allowlist enforcement; model-call Consume hooks
-6. **v1** — stable SDK + ACP/session adapters for coding agents
+4. **v0.3** — egress allowlist (CONNECT proxy + ProxyOnly kernel mode)
+5. **v0.4** — worktree backend; per-task rebind; credential inject/revoke
+6. **v0.5** — model-call Consume hooks
+7. **v1** — stable SDK + ACP/session adapters for coding agents
 
 ## Non-goals
 

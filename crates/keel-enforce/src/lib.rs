@@ -8,6 +8,7 @@
 //!   Linux read-deny uses bubblewrap bind-over.
 
 mod backend;
+mod egress_proxy;
 mod error;
 mod null;
 mod process_guard;
@@ -25,6 +26,7 @@ mod bwrap;
 mod local_process;
 
 pub use backend::{BackendInfo, EnforceBackend, SpawnRequest, SpawnedProcess};
+pub use egress_proxy::{EgressProxy, EGRESS_PROXY_PORT_ENV};
 pub use error::{EnforceError, EnforceResult};
 pub use local_process::{LocalProcessBackend, LocalProcessOptions};
 pub use null::NullBackend;

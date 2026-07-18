@@ -20,7 +20,7 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.2** — local-process with **isolated child apply**, Linux **bwrap read-deny**, and default event logs under `~/.keel/spaces/<id>/events.jsonl`.
+**v0.0.3** — **egress allowlist** (CONNECT proxy + kernel ProxyOnly), plus isolated child apply, Linux bwrap read-deny, and `~/.keel/spaces/<id>/events.jsonl`.
 
 ## Quick start
 
@@ -99,8 +99,12 @@ Design notes: [`docs/design.md`](docs/design.md).
 # Kernel FS on children only (host stays clean); events under ~/.keel/spaces/
 cargo run -p keel-cli -- run --backend local-process --profile workspace -- echo hello
 
-# Linux: deny paths need bubblewrap for true read-deny
-# cargo run -p keel-cli -- run --backend local-process -- ...
+# Egress allowlist: only listed hosts (via local CONNECT proxy + ProxyOnly)
+cargo run -p keel-cli -- check-egress evil.com --allow-host api.x.ai:443
+cargo run -p keel-cli -- run --backend local-process --allow-host example.com:80 -- \
+  curl -sI -x "$HTTP_PROXY" http://example.com/   # proxy env injected automatically
+
+# Linux: FS deny paths need bubblewrap for true read-deny
 ```
 
 ## Profiles
