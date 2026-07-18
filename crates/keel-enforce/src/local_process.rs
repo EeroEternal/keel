@@ -1,13 +1,15 @@
 //! `local-process` backend: Landlock (Linux) / Seatbelt (macOS) via nono.
 //!
-//! ## Semantics
+//! ## Default semantics (`isolate_apply = true`)
 //!
-//! - Applies a **process-wide, irreversible** kernel FS sandbox on `apply()`.
-//! - Does **not** block parent-process network by default (agent needs LLM/MCP).
-//! - When `NetworkPolicy::DenyAll`, child processes get Linux seccomp net filter
-//!   in `pre_exec` (no-op on macOS for child net).
-//! - Only one kernel apply per process; a second `apply` with a different policy
-//!   returns [`EnforceError::AlreadyApplied`].
+//! - Host process is **not** sandboxed.
+//! - On `spawn`, the child applies the kernel sandbox in `pre_exec` (after fork).
+//! - On Linux, deny paths are enforced with **bubblewrap** bind-over (read-deny).
+//! - Parent keeps network; `NetworkPolicy::DenyAll` uses child seccomp on Linux.
+//!
+//! ## Legacy (`isolate_apply = false`)
+//!
+//! - `apply()` sandboxes the **current** process (irreversible, one policy per process).
 
 use crate::backend::{base_command, BackendInfo, EnforceBackend, SpawnRequest, SpawnedProcess};
 use crate::error::{EnforceError, EnforceResult};
@@ -22,9 +24,9 @@ use std::sync::{Arc, OnceLock};
 use tracing::{info, warn};
 
 #[cfg(all(unix, feature = "kernel"))]
-use crate::map_caps::{policy_to_capability_set, MapOptions};
+use crate::sandbox_child;
 
-/// Process-global: policy id that was applied (kernel sandbox is one-shot).
+/// Process-global: policy id when host-applied (isolate_apply = false only).
 static KERNEL_APPLIED_POLICY: OnceLock<String> = OnceLock::new();
 
 /// Options for [`LocalProcessBackend`].
@@ -32,8 +34,10 @@ static KERNEL_APPLIED_POLICY: OnceLock<String> = OnceLock::new();
 pub struct LocalProcessOptions {
     /// Fail if the platform cannot enforce kernel FS (default true).
     pub require_kernel: bool,
-    /// Block network for the entire process via nono (default false).
+    /// Block network for the sandboxed process via nono (default false).
     pub block_process_network: bool,
+    /// If true (default), apply kernel sandbox only in children, not the host.
+    pub isolate_apply: bool,
 }
 
 impl Default for LocalProcessOptions {
@@ -41,6 +45,7 @@ impl Default for LocalProcessOptions {
         Self {
             require_kernel: true,
             block_process_network: false,
+            isolate_apply: true,
         }
     }
 }
@@ -65,7 +70,6 @@ impl LocalProcessBackend {
         }
     }
 
-    /// Whether this process has a kernel sandbox applied (any backend instance).
     pub fn process_has_kernel_sandbox() -> bool {
         KERNEL_APPLIED_POLICY.get().is_some()
     }
@@ -76,6 +80,10 @@ impl LocalProcessBackend {
 
     pub fn restricts_child_network(&self) -> bool {
         self.restrict_child_net.load(Ordering::Acquire)
+    }
+
+    pub fn options(&self) -> &LocalProcessOptions {
+        &self.opts
     }
 }
 
@@ -106,7 +114,10 @@ impl EnforceBackend for LocalProcessBackend {
 
         #[cfg(all(unix, feature = "kernel"))]
         {
-            return self.apply_kernel(policy, sink).await;
+            if self.opts.isolate_apply {
+                return self.apply_isolated_prepare(policy, sink).await;
+            }
+            return self.apply_on_host(policy, sink).await;
         }
 
         #[cfg(not(all(unix, feature = "kernel")))]
@@ -123,7 +134,6 @@ impl EnforceBackend for LocalProcessBackend {
     }
 
     async fn check_fs(&self, policy: &Policy, path: &Path, write: bool) -> EnforceResult<bool> {
-        // Soft check always; kernel is the hard boundary after apply.
         Ok(process_guard::soft_fs_allowed(policy, path, write))
     }
 
@@ -175,37 +185,83 @@ impl EnforceBackend for LocalProcessBackend {
             ))
             .await;
 
-        let mut cmd = base_command(&req);
-
-        let restrict_net = self.restrict_child_net.load(Ordering::Acquire)
-            || matches!(policy.network, NetworkPolicy::DenyAll);
-
-        #[cfg(target_os = "linux")]
+        #[cfg(all(unix, feature = "kernel"))]
         {
-            if restrict_net {
-                use std::os::unix::process::CommandExt;
-                // SAFETY: pre_exec runs in child after fork.
-                unsafe {
-                    cmd.pre_exec(|| crate::child_net::install_child_network_filter());
-                }
-            }
+            return self.spawn_sandboxed(policy, req).await;
         }
-        #[cfg(not(target_os = "linux"))]
-        let _ = restrict_net;
 
-        let child = cmd.spawn()?;
-        Ok(SpawnedProcess { child })
+        #[cfg(not(all(unix, feature = "kernel")))]
+        {
+            let mut cmd = base_command(&req);
+            let child = cmd.spawn()?;
+            Ok(SpawnedProcess { child })
+        }
     }
 
     async fn destroy(&self, _policy: &Policy, _sink: Arc<dyn RecordSink>) -> EnforceResult<()> {
-        // Kernel FS sandbox cannot be undone until process exit.
         Ok(())
     }
 }
 
 #[cfg(all(unix, feature = "kernel"))]
 impl LocalProcessBackend {
-    async fn apply_kernel(&self, policy: &Policy, sink: Arc<dyn RecordSink>) -> EnforceResult<()> {
+    /// Prepare only: validate mapping; do not touch host process.
+    async fn apply_isolated_prepare(
+        &self,
+        policy: &Policy,
+        sink: Arc<dyn RecordSink>,
+    ) -> EnforceResult<()> {
+        match sandbox_child::prepare_kernel(policy, self.opts.block_process_network) {
+            Ok(()) => {}
+            Err(e) if !self.opts.require_kernel => {
+                warn!(error = %e, "kernel prepare failed; children will soft-check only");
+                self.applied.store(true, Ordering::Release);
+                return Ok(());
+            }
+            Err(e) => return Err(e),
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let denies = crate::bwrap::deny_paths_for_bwrap(policy);
+            if !denies.is_empty() && !crate::bwrap::bwrap_available() {
+                let msg = "Linux read-deny requires bubblewrap (bwrap); install it or clear deny paths";
+                if self.opts.require_kernel {
+                    return Err(EnforceError::ApplyFailed(msg.into()));
+                }
+                warn!("{msg}");
+            }
+        }
+
+        if matches!(policy.network, NetworkPolicy::DenyAll) || self.opts.block_process_network {
+            self.restrict_child_net.store(true, Ordering::Release);
+        }
+        self.applied.store(true, Ordering::Release);
+        info!(
+            policy_id = %policy.id,
+            isolate = true,
+            "local-process ready (kernel apply deferred to children)"
+        );
+        let _ = sink
+            .emit(RecordEvent::new(
+                SpaceId::from_string("pending"),
+                policy.id.clone(),
+                policy.task_id.clone(),
+                EventKind::Note {
+                    message: "local-process isolate_apply: host unsandboxed; children apply kernel FS"
+                        .into(),
+                },
+            ))
+            .await;
+        Ok(())
+    }
+
+    /// Legacy: sandbox the host process.
+    async fn apply_on_host(
+        &self,
+        policy: &Policy,
+        sink: Arc<dyn RecordSink>,
+    ) -> EnforceResult<()> {
         use nono::Sandbox;
 
         let support = Sandbox::support_info();
@@ -214,7 +270,7 @@ impl LocalProcessBackend {
             if self.opts.require_kernel {
                 return Err(EnforceError::Unsupported(details));
             }
-            warn!(details = %details, "kernel sandbox unsupported; continuing soft-only");
+            warn!(details = %details, "kernel sandbox unsupported; soft-only");
             self.applied.store(true, Ordering::Release);
             return Ok(());
         }
@@ -226,58 +282,153 @@ impl LocalProcessBackend {
                     requested: policy.id.to_string(),
                 });
             }
-            // Same policy id re-apply: treat as idempotent success.
             self.applied.store(true, Ordering::Release);
-            if matches!(policy.network, NetworkPolicy::DenyAll) {
-                self.restrict_child_net.store(true, Ordering::Release);
-            }
             return Ok(());
         }
 
-        let map_opts = MapOptions {
-            block_process_network: self.opts.block_process_network,
-        };
-        let caps = policy_to_capability_set(policy, map_opts)?;
+        sandbox_child::apply_kernel_here(policy, self.opts.block_process_network)?;
+        let _ = KERNEL_APPLIED_POLICY.set(policy.id.to_string());
+        self.applied.store(true, Ordering::Release);
+        if matches!(policy.network, NetworkPolicy::DenyAll) || self.opts.block_process_network {
+            self.restrict_child_net.store(true, Ordering::Release);
+        }
+        let _ = sink
+            .emit(RecordEvent::new(
+                SpaceId::from_string("pending"),
+                policy.id.clone(),
+                policy.task_id.clone(),
+                EventKind::Note {
+                    message: format!(
+                        "kernel sandbox applied on host via nono ({})",
+                        support.platform
+                    ),
+                },
+            ))
+            .await;
+        Ok(())
+    }
 
-        match Sandbox::apply(&caps) {
-            Ok(_) => {
-                let _ = KERNEL_APPLIED_POLICY.set(policy.id.to_string());
-                self.applied.store(true, Ordering::Release);
-                if matches!(policy.network, NetworkPolicy::DenyAll)
-                    || self.opts.block_process_network
-                {
-                    self.restrict_child_net.store(true, Ordering::Release);
+    async fn spawn_sandboxed(
+        &self,
+        policy: &Policy,
+        req: SpawnRequest,
+    ) -> EnforceResult<SpawnedProcess> {
+        let restrict_net = self.restrict_child_net.load(Ordering::Acquire)
+            || matches!(policy.network, NetworkPolicy::DenyAll);
+        let isolate = self.opts.isolate_apply;
+        let block_net = self.opts.block_process_network;
+        let require_kernel = self.opts.require_kernel;
+
+        // Validate mapping early (parent).
+        if isolate {
+            if let Err(e) = sandbox_child::prepare_kernel(policy, block_net) {
+                if require_kernel {
+                    return Err(e);
                 }
-                info!(
-                    policy_id = %policy.id,
-                    platform = support.platform,
-                    "local-process kernel sandbox applied (irreversible)"
-                );
-                let _ = sink
-                    .emit(RecordEvent::new(
-                        SpaceId::from_string("pending"),
-                        policy.id.clone(),
-                        policy.task_id.clone(),
-                        EventKind::Note {
-                            message: format!(
-                                "kernel sandbox applied via nono ({})",
-                                support.platform
-                            ),
-                        },
-                    ))
-                    .await;
-                Ok(())
-            }
-            Err(e) => {
-                if self.opts.require_kernel {
-                    Err(EnforceError::ApplyFailed(e.to_string()))
-                } else {
-                    warn!(error = %e, "kernel apply failed; soft-only");
-                    self.applied.store(true, Ordering::Release);
-                    Ok(())
-                }
+                warn!(error = %e, "spawn without kernel apply");
             }
         }
+
+        let policy_file = if isolate {
+            Some(sandbox_child::write_spawn_policy_file(policy)?)
+        } else {
+            None
+        };
+
+        // Prefer bwrap outer command when Linux deny paths exist.
+        #[cfg(target_os = "linux")]
+        let mut cmd = {
+            let deny_paths = crate::bwrap::deny_paths_for_bwrap(policy);
+            if let Some(mut bwrap_cmd) = crate::bwrap::wrap_command(
+                &req.program,
+                &req.args,
+                &deny_paths,
+                req.cwd.as_deref(),
+                &req.env,
+            )? {
+                bwrap_cmd
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped());
+                let mut cmd = tokio::process::Command::from(bwrap_cmd);
+                attach_child_hooks(
+                    &mut cmd,
+                    isolate,
+                    policy_file.clone(),
+                    block_net,
+                    restrict_net,
+                );
+                cmd
+            } else {
+                let mut cmd = base_command(&req);
+                attach_child_hooks(
+                    &mut cmd,
+                    isolate,
+                    policy_file.clone(),
+                    block_net,
+                    restrict_net,
+                );
+                cmd
+            }
+        };
+        #[cfg(not(target_os = "linux"))]
+        let mut cmd = {
+            let mut cmd = base_command(&req);
+            attach_child_hooks(
+                &mut cmd,
+                isolate,
+                policy_file.clone(),
+                block_net,
+                restrict_net,
+            );
+            cmd
+        };
+
+        let child = cmd.spawn().map_err(|e| {
+            if let Some(pf) = &policy_file {
+                let _ = std::fs::remove_file(pf);
+            }
+            e
+        })?;
+
+        Ok(SpawnedProcess { child })
+    }
+}
+
+#[cfg(all(unix, feature = "kernel"))]
+fn attach_child_hooks(
+    cmd: &mut tokio::process::Command,
+    isolate: bool,
+    policy_file: Option<std::path::PathBuf>,
+    block_net: bool,
+    restrict_net: bool,
+) {
+    // tokio::process::Command::pre_exec requires the Unix CommandExt trait.
+    #[allow(unused_imports)]
+    use std::os::unix::process::CommandExt as _;
+    if isolate {
+        if let Some(pf) = policy_file {
+            unsafe {
+                cmd.pre_exec(move || {
+                    match sandbox_child::apply_policy_file_and_ready(&pf, block_net) {
+                        Ok(_) => {}
+                        Err(e) => return Err(std::io::Error::other(e.to_string())),
+                    }
+                    if restrict_net {
+                        crate::child_net::install_child_network_filter()?;
+                    }
+                    let _ = std::fs::remove_file(&pf);
+                    Ok(())
+                });
+            }
+        }
+    } else if restrict_net {
+        #[cfg(target_os = "linux")]
+        unsafe {
+            cmd.pre_exec(|| crate::child_net::install_child_network_filter());
+        }
+        #[cfg(not(target_os = "linux"))]
+        let _ = restrict_net;
     }
 }
 
@@ -289,15 +440,31 @@ mod tests {
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn maps_and_reports_info() {
-        let b = LocalProcessBackend::new();
-        let info = b.info();
-        assert_eq!(info.name, "local-process");
+    async fn isolate_prepare_does_not_mark_host_kernel() {
+        let dir = tempfile::tempdir().unwrap();
+        let policy = profile_workspace(dir.path()).unwrap();
+        let sink = Arc::new(MemorySink::new());
+        let backend = LocalProcessBackend::new(); // isolate_apply default true
+        // On macOS/Linux with kernel support this succeeds without host apply.
+        let result = backend.apply(&policy, sink).await;
+        // May fail on unsupported platforms in CI — only assert structure when ok.
+        if result.is_ok() {
+            assert!(backend.is_applied());
+            // Host should not have KERNEL_APPLIED_POLICY set in isolate mode.
+            assert!(!LocalProcessBackend::process_has_kernel_sandbox());
+        }
     }
 
-    /// Apply is process-wide and irreversible — only run when explicitly requested.
     #[tokio::test]
-    async fn optional_kernel_apply_smoke() {
+    async fn maps_and_reports_info() {
+        let b = LocalProcessBackend::new();
+        assert_eq!(b.info().name, "local-process");
+        assert!(b.options().isolate_apply);
+    }
+
+    /// Host apply path — only when explicitly requested.
+    #[tokio::test]
+    async fn optional_host_kernel_apply_smoke() {
         if std::env::var("KEEL_KERNEL_TEST").ok().as_deref() != Some("1") {
             return;
         }
@@ -307,8 +474,10 @@ mod tests {
         let backend = LocalProcessBackend::with_options(LocalProcessOptions {
             require_kernel: true,
             block_process_network: false,
+            isolate_apply: false,
         });
         backend.apply(&policy, sink).await.unwrap();
         assert!(backend.is_applied());
+        assert!(LocalProcessBackend::process_has_kernel_sandbox());
     }
 }

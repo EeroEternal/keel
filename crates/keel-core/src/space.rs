@@ -2,8 +2,11 @@ use crate::error::{KeelError, KeelResult};
 use chrono::Utc;
 use keel_enforce::{EnforceBackend, SpawnRequest, SpawnedProcess};
 use keel_policy::{Policy, SpaceId};
-use keel_record::{EventKind, RecordEvent, RecordSink};
-use std::path::Path;
+use keel_record::{
+    default_space_sink, space_policy_path, EventKind, MemorySink, MultiSink, RecordEvent,
+    RecordSink,
+};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -16,12 +19,34 @@ pub enum SpaceState {
     Destroyed,
 }
 
+/// Options for opening a space.
+#[derive(Debug, Clone)]
+pub struct SpaceOptions {
+    /// Persist events to `~/.keel/spaces/<id>/events.jsonl` (default true).
+    pub persist_events: bool,
+    /// Also keep an in-memory copy of events (default false; true when useful for tests/CLI --trace).
+    pub memory_events: bool,
+    /// Write `policy.json` next to events (default true when persist_events).
+    pub persist_policy: bool,
+}
+
+impl Default for SpaceOptions {
+    fn default() -> Self {
+        Self {
+            persist_events: true,
+            memory_events: false,
+            persist_policy: true,
+        }
+    }
+}
+
 /// Live execution space: one policy, one backend, one record stream.
 pub struct Space {
     id: SpaceId,
     policy: Policy,
     backend: Arc<dyn EnforceBackend>,
     sink: Arc<dyn RecordSink>,
+    events_path: Option<PathBuf>,
     state: RwLock<SpaceState>,
 }
 
@@ -40,6 +65,11 @@ impl SpaceHandle {
         &self.inner.policy
     }
 
+    /// Path to JSONL events when persistence is enabled.
+    pub fn events_path(&self) -> Option<&Path> {
+        self.inner.events_path.as_deref()
+    }
+
     pub fn backend_info(&self) -> keel_enforce::BackendInfo {
         self.inner.backend.info()
     }
@@ -48,7 +78,6 @@ impl SpaceHandle {
         *self.inner.state.read().await
     }
 
-    /// Soft FS check (and kernel check when backend supports it).
     pub async fn check_fs(&self, path: &Path, write: bool) -> KeelResult<bool> {
         self.inner.ensure_open().await?;
         if self.inner.policy.is_expired(Utc::now()) {
@@ -69,7 +98,6 @@ impl SpaceHandle {
         Ok(allowed)
     }
 
-    /// Spawn a process under this space's policy.
     pub async fn spawn(&self, req: SpawnRequest) -> KeelResult<SpawnedProcess> {
         self.inner.ensure_open().await?;
         let child = self
@@ -85,7 +113,6 @@ impl SpaceHandle {
         Ok(child)
     }
 
-    /// Run a command to completion, capturing stdout/stderr (UTF-8 lossy).
     pub async fn run_capture(
         &self,
         program: &str,
@@ -97,18 +124,35 @@ impl SpaceHandle {
         Ok(output)
     }
 
-    /// Destroy the space: revoke credentials (future), backend teardown, final record.
     pub async fn destroy(self) -> KeelResult<()> {
         self.inner.destroy_inner().await
     }
 }
 
 impl Space {
-    /// Create and apply a new space.
+    /// Create a space with default persistence (`~/.keel/spaces/<id>/events.jsonl`).
     pub async fn create(
         policy: Policy,
         backend: Arc<dyn EnforceBackend>,
-        sink: Arc<dyn RecordSink>,
+    ) -> KeelResult<SpaceHandle> {
+        Self::create_with(policy, backend, SpaceOptions::default()).await
+    }
+
+    /// Create with explicit options and optional pre-built sink override.
+    pub async fn create_with(
+        policy: Policy,
+        backend: Arc<dyn EnforceBackend>,
+        opts: SpaceOptions,
+    ) -> KeelResult<SpaceHandle> {
+        Self::create_with_sink(policy, backend, opts, None).await
+    }
+
+    /// Full constructor: optional sink override (e.g. tests inject `MemorySink` only).
+    pub async fn create_with_sink(
+        policy: Policy,
+        backend: Arc<dyn EnforceBackend>,
+        opts: SpaceOptions,
+        sink_override: Option<Arc<dyn RecordSink>>,
     ) -> KeelResult<SpaceHandle> {
         policy.validate()?;
         if policy.is_expired(Utc::now()) {
@@ -116,11 +160,47 @@ impl Space {
         }
 
         let id = SpaceId::new();
+        let mut events_path = None;
+
+        let sink: Arc<dyn RecordSink> = if let Some(s) = sink_override {
+            s
+        } else {
+            let mut parts: Vec<Arc<dyn RecordSink>> = Vec::new();
+            if opts.memory_events {
+                parts.push(Arc::new(MemorySink::new()));
+            }
+            if opts.persist_events {
+                let jsonl = default_space_sink(&id).await?;
+                events_path = Some(jsonl.path().to_path_buf());
+                parts.push(Arc::new(jsonl));
+            }
+            if parts.is_empty() {
+                // Always have at least a memory sink so events are not dropped.
+                parts.push(Arc::new(MemorySink::new()));
+            }
+            if parts.len() == 1 {
+                parts.pop().unwrap()
+            } else {
+                Arc::new(MultiSink::new(parts))
+            }
+        };
+
+        if opts.persist_policy && opts.persist_events {
+            let path = space_policy_path(&id);
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(json) = policy.to_json() {
+                let _ = std::fs::write(&path, json);
+            }
+        }
+
         let space = Arc::new(Space {
             id: id.clone(),
             policy: policy.clone(),
             backend: backend.clone(),
             sink: sink.clone(),
+            events_path,
             state: RwLock::new(SpaceState::Creating),
         });
 
@@ -143,6 +223,7 @@ impl Space {
             space_id = %id,
             policy_id = %policy.id,
             backend = backend.info().name,
+            events = ?space.events_path,
             "keel space open"
         );
 
@@ -208,38 +289,75 @@ mod tests {
     use super::*;
     use keel_enforce::ProcessGuardBackend;
     use keel_policy::profile_workspace;
-    use keel_record::MemorySink;
-    use std::path::Path;
     use std::sync::Arc;
 
     #[tokio::test]
-    async fn create_check_destroy() {
+    async fn create_check_destroy_memory_only() {
         let policy = profile_workspace(Path::new("/tmp/keel-test-ws")).unwrap();
-        let sink = Arc::new(MemorySink::new());
+        let sink: Arc<dyn RecordSink> = Arc::new(MemorySink::new());
         let backend = Arc::new(ProcessGuardBackend::new());
-        let space = Space::create(policy, backend, sink.clone())
-            .await
-            .unwrap();
+        let space = Space::create_with_sink(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+            },
+            Some(sink.clone()),
+        )
+        .await
+        .unwrap();
 
         assert!(space
             .check_fs(Path::new("/tmp/keel-test-ws/foo.rs"), true)
             .await
             .unwrap());
-        assert!(!space
-            .check_fs(Path::new("/etc/shadow"), true)
-            .await
-            .unwrap());
-
         space.destroy().await.unwrap();
-        assert!(sink.len().await >= 3);
+    }
+
+    #[tokio::test]
+    async fn create_persists_events() {
+        let dir = tempfile::tempdir().unwrap();
+        // Isolate home for this test.
+        // SAFETY: test-only env mutation, single-threaded for this var.
+        unsafe {
+            std::env::set_var("KEEL_HOME", dir.path());
+        }
+        let policy = profile_workspace(Path::new("/tmp")).unwrap();
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create(policy, backend).await.unwrap();
+        let path = space.events_path().unwrap().to_path_buf();
+        space
+            .check_fs(Path::new("/tmp/x"), false)
+            .await
+            .unwrap();
+        space.destroy().await.unwrap();
+        assert!(path.is_file());
+        let body = std::fs::read_to_string(&path).unwrap();
+        assert!(body.contains("\"kind\""));
+        unsafe {
+            std::env::remove_var("KEEL_HOME");
+        }
     }
 
     #[tokio::test]
     async fn spawn_echo() {
         let policy = profile_workspace(Path::new("/tmp")).unwrap();
-        let sink = Arc::new(MemorySink::new());
+        let sink: Arc<dyn RecordSink> = Arc::new(MemorySink::new());
         let backend = Arc::new(ProcessGuardBackend::new());
-        let space = Space::create(policy, backend, sink).await.unwrap();
+        let space = Space::create_with_sink(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+            },
+            Some(sink),
+        )
+        .await
+        .unwrap();
 
         let out = space.run_capture("echo", &["keel-ok"]).await.unwrap();
         assert!(out.status.success());

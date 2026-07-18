@@ -61,14 +61,27 @@ keel run --profile read-only -- echo hello
 
 ### `local-process` notes
 
-- Apply is **process-wide and irreversible** (one policy per process).
-- Parent process network stays open by default so the agent host can call LLM/MCP APIs.
-- `NetworkPolicy::DenyAll` restricts **child** processes on Linux via seccomp in `pre_exec` (macOS: no child-net filter yet).
-- macOS path **deny** uses Seatbelt platform rules; Linux subpath deny is advisory until a bwrap backend.
-- Set `KEEL_KERNEL_TEST=1` to run the optional apply smoke test.
-- Dependency: `nono = 0.53.0` (rustc 1.93-compatible; re-verify Seatbelt deny rules before upgrading).
+- **Default `isolate_apply = true`**: host stays unsandboxed; each `spawn` applies Landlock/Seatbelt in the **child** (`pre_exec` after fork).
+- **Legacy** `isolate_apply = false`: sandboxes the host process (irreversible, one policy per process).
+- Parent network stays open; `NetworkPolicy::DenyAll` → Linux child **seccomp** (macOS: no child-net filter yet).
+- **Linux read-deny**: **bubblewrap** bind-over of mode-000 placeholders (Landlock cannot deny subpaths). Requires `bwrap` on `PATH` or `KEEL_BWRAP`.
+- **macOS deny**: Seatbelt platform rules (including write sub-actions and `/private` aliases).
+- Optional host-apply smoke: `KEEL_KERNEL_TEST=1` with `isolate_apply = false`.
+- Dependency: `nono = 0.53.0` (rustc 1.93-compatible).
 
-Portable soft backends remain the default for CLI demos; use `--backend local-process` for kernel FS.
+### Event persistence
+
+Default space layout:
+
+```text
+~/.keel/spaces/<space_id>/
+  events.jsonl
+  policy.json
+```
+
+Override root with `$KEEL_HOME`. CLI: `--no-persist` to skip disk logs.
+
+Portable soft backends remain the default for casual CLI demos; use `--backend local-process` for kernel FS.
 
 ## Policy presets
 
@@ -94,8 +107,8 @@ Sinks: `MemorySink`, `JsonlSink`, `MultiSink`.
 
 1. **v0** — types, soft backends, CLI, design
 2. **v0.1** — `local-process` Landlock/Seatbelt (nono); child seccomp on Linux
-3. **v0.2** — JSONL default under `~/.keel/spaces/<id>/`; credential inject/revoke stubs
-4. **v0.3** — Linux bwrap read-deny; worktree backend; per-task rebind (new space)
+3. **v0.2** — isolate_apply children; Linux bwrap read-deny; `~/.keel/spaces/<id>/events.jsonl`
+4. **v0.3** — worktree backend; per-task rebind (new space); credential inject/revoke
 5. **v0.4** — egress allowlist enforcement; model-call Consume hooks
 6. **v1** — stable SDK + ACP/session adapters for coding agents
 

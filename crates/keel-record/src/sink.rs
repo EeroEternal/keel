@@ -99,6 +99,15 @@ impl MultiSink {
     }
 }
 
+/// Create the default on-disk JSONL sink for a space
+/// (`~/.keel/spaces/<id>/events.jsonl`).
+pub async fn default_space_sink(
+    space_id: &keel_policy::SpaceId,
+) -> std::io::Result<JsonlSink> {
+    let path = crate::paths::space_events_path(space_id);
+    JsonlSink::create(path).await
+}
+
 #[async_trait]
 impl RecordSink for MultiSink {
     async fn emit(&self, event: RecordEvent) -> std::io::Result<()> {

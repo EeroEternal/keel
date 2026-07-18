@@ -20,8 +20,7 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.1 + local-process kernel backend.**  
-Policy types, record sinks, process-guard, **Landlock/Seatbelt via nono** (`local-process`), CLI, and design docs.
+**v0.0.2** — local-process with **isolated child apply**, Linux **bwrap read-deny**, and default event logs under `~/.keel/spaces/<id>/events.jsonl`.
 
 ## Quick start
 
@@ -97,8 +96,11 @@ Design notes: [`docs/design.md`](docs/design.md).
 | `remote-microvm` | Strong isolation | planned |
 
 ```bash
-# Kernel FS sandbox (irreversible for the process lifetime)
+# Kernel FS on children only (host stays clean); events under ~/.keel/spaces/
 cargo run -p keel-cli -- run --backend local-process --profile workspace -- echo hello
+
+# Linux: deny paths need bubblewrap for true read-deny
+# cargo run -p keel-cli -- run --backend local-process -- ...
 ```
 
 ## Profiles

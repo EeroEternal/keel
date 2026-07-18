@@ -4,7 +4,7 @@ use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use keel_core::{
     profile_read_only, profile_strict, profile_workspace, EnforceBackend, LocalProcessBackend,
-    MemorySink, NullBackend, Policy, ProcessGuardBackend, Space, SpawnRequest,
+    NullBackend, Policy, ProcessGuardBackend, Space, SpaceOptions, SpawnRequest,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -29,10 +29,8 @@ enum Commands {
     Policy {
         #[arg(long, value_enum, default_value_t = Profile::Workspace)]
         profile: Profile,
-        /// Workspace root (default: cwd).
         #[arg(long)]
         workspace: Option<PathBuf>,
-        /// Also write TOML to this path.
         #[arg(long)]
         out: Option<PathBuf>,
     },
@@ -42,15 +40,13 @@ enum Commands {
         profile: Profile,
         #[arg(long)]
         workspace: Option<PathBuf>,
-        /// Path to check.
         path: PathBuf,
-        /// Check write access instead of read.
         #[arg(long)]
         write: bool,
         #[arg(long, value_enum, default_value_t = BackendChoice::ProcessGuard)]
         backend: BackendChoice,
     },
-    /// Run a command inside a temporary space.
+    /// Run a command inside a temporary space (events under ~/.keel/spaces/).
     Run {
         #[arg(long, value_enum, default_value_t = Profile::Workspace)]
         profile: Profile,
@@ -58,10 +54,25 @@ enum Commands {
         workspace: Option<PathBuf>,
         #[arg(long, value_enum, default_value_t = BackendChoice::ProcessGuard)]
         backend: BackendChoice,
-        /// Print JSONL-style events to stderr after the run.
+        /// Also keep events in memory and print them to stderr.
         #[arg(long)]
         trace: bool,
-        /// Program and args after `--`.
+        /// Do not write ~/.keel/spaces/<id>/events.jsonl.
+        #[arg(long)]
+        no_persist: bool,
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
+        cmd: Vec<String>,
+    },
+    /// Apply kernel sandbox then exec a program (internal / advanced).
+    ///
+    /// Used so library hosts never apply Landlock/Seatbelt to themselves.
+    SandboxExec {
+        /// Path to policy JSON.
+        #[arg(long)]
+        policy_file: PathBuf,
+        /// Block network in the sandboxed process.
+        #[arg(long)]
+        block_network: bool,
         #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
         cmd: Vec<String>,
     },
@@ -78,17 +89,16 @@ enum Profile {
 enum BackendChoice {
     Null,
     ProcessGuard,
-    /// Landlock (Linux) / Seatbelt (macOS). Process-wide FS; irreversible.
+    /// Landlock/Seatbelt; children sandboxed by default (host stays clean).
     LocalProcess,
 }
 
 fn build_policy(profile: Profile, workspace: PathBuf) -> Result<Policy> {
-    let p = match profile {
+    Ok(match profile {
         Profile::Workspace => profile_workspace(&workspace)?,
         Profile::ReadOnly => profile_read_only(&workspace)?,
         Profile::Strict => profile_strict(&workspace)?,
-    };
-    Ok(p)
+    })
 }
 
 fn make_backend(choice: BackendChoice) -> Arc<dyn keel_core::EnforceBackend> {
@@ -123,8 +133,9 @@ async fn main() -> Result<()> {
             }
             println!("pillars: Policy · Enforce · Record · Lifecycle");
             println!(
-                "note: local-process applies irreversible process-wide FS sandbox (Landlock/Seatbelt)"
+                "local-process: isolate_apply=true (host clean; children get Landlock/Seatbelt)"
             );
+            println!("events: ~/.keel/spaces/<id>/events.jsonl");
         }
         Commands::Policy {
             profile,
@@ -133,12 +144,10 @@ async fn main() -> Result<()> {
         } => {
             let ws = workspace.unwrap_or(std::env::current_dir()?);
             let policy = build_policy(profile, ws)?;
-            let json = policy.to_json()?;
-            println!("{json}");
+            println!("{}", policy.to_json()?);
             if let Some(path) = out {
-                std::fs::write(&path, policy.to_toml()?).with_context(|| {
-                    format!("write policy toml to {}", path.display())
-                })?;
+                std::fs::write(&path, policy.to_toml()?)
+                    .with_context(|| format!("write {}", path.display()))?;
             }
         }
         Commands::Check {
@@ -150,8 +159,16 @@ async fn main() -> Result<()> {
         } => {
             let ws = workspace.unwrap_or(std::env::current_dir()?);
             let policy = build_policy(profile, ws)?;
-            let sink = Arc::new(MemorySink::new());
-            let space = Space::create(policy, make_backend(backend), sink).await?;
+            let space = Space::create_with(
+                policy,
+                make_backend(backend),
+                SpaceOptions {
+                    persist_events: false,
+                    memory_events: true,
+                    persist_policy: false,
+                },
+            )
+            .await?;
             let allowed = space.check_fs(&path, write).await?;
             println!(
                 "{} {} → {}",
@@ -169,6 +186,7 @@ async fn main() -> Result<()> {
             workspace,
             backend,
             trace,
+            no_persist,
             cmd,
         } => {
             if cmd.is_empty() {
@@ -176,12 +194,22 @@ async fn main() -> Result<()> {
             }
             let ws = workspace.unwrap_or(std::env::current_dir()?);
             let policy = build_policy(profile, ws)?;
-            let sink = Arc::new(MemorySink::new());
-            let space = Space::create(policy, make_backend(backend), sink.clone()).await?;
+            let space = Space::create_with(
+                policy,
+                make_backend(backend),
+                SpaceOptions {
+                    persist_events: !no_persist,
+                    memory_events: trace,
+                    persist_policy: !no_persist,
+                },
+            )
+            .await?;
 
-            let program = cmd[0].clone();
-            let args: Vec<String> = cmd[1..].to_vec();
-            let req = SpawnRequest::new(program).args(args);
+            if let Some(p) = space.events_path() {
+                eprintln!("keel: events → {}", p.display());
+            }
+
+            let req = SpawnRequest::new(cmd[0].clone()).args(cmd[1..].to_vec());
             let spawned = space.spawn(req).await?;
             let output = spawned.child.wait_with_output().await?;
 
@@ -189,15 +217,30 @@ async fn main() -> Result<()> {
             let _ = std::io::stdout().write_all(&output.stdout);
             let _ = std::io::stderr().write_all(&output.stderr);
 
-            if trace {
-                for ev in sink.events().await {
-                    eprintln!("{}", serde_json::to_string(&ev)?);
-                }
-            }
-
             space.destroy().await?;
             if !output.status.success() {
                 std::process::exit(output.status.code().unwrap_or(1));
+            }
+        }
+        Commands::SandboxExec {
+            policy_file,
+            block_network,
+            cmd,
+        } => {
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                let _policy =
+                    keel_core::apply_policy_file_and_ready(&policy_file, block_network)?;
+                let err = std::process::Command::new(&cmd[0])
+                    .args(&cmd[1..])
+                    .exec();
+                bail!("exec failed: {err}");
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = (policy_file, block_network, cmd);
+                bail!("sandbox-exec requires unix");
             }
         }
     }
