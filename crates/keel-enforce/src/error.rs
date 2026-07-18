@@ -16,6 +16,17 @@ pub enum EnforceError {
     #[error("space is closed")]
     Closed,
 
+    /// Kernel sandbox was already applied to this process (irreversible).
+    #[error("kernel sandbox already applied (policy {applied}); cannot re-apply {requested}")]
+    AlreadyApplied {
+        applied: String,
+        requested: String,
+    },
+
+    /// Kernel apply failed and this backend is fail-closed.
+    #[error("kernel sandbox apply failed: {0}")]
+    ApplyFailed(String),
+
     #[error(transparent)]
     Policy(#[from] keel_policy::PolicyError),
 

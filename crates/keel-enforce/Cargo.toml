@@ -6,6 +6,11 @@ license.workspace = true
 description = "Enforce backends for Keel — map Policy to real boundaries"
 rust-version.workspace = true
 
+[features]
+default = ["kernel"]
+## Landlock (Linux) / Seatbelt (macOS) via nono. No-op stubs on other platforms.
+kernel = []
+
 [dependencies]
 keel-policy = { workspace = true }
 keel-record = { workspace = true }
@@ -18,6 +23,13 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 dunce = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+# Pinned: Seatbelt deny/platform-rule behavior can change across nono releases.
+# Re-verify LocalProcessBackend e2e after bumping.
+# 0.53 matches Grok's pin and supports rustc 1.93; 0.68+ needs rustc 1.95.
+nono = { version = "=0.53.0", default-features = false }
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = { workspace = true }
-tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "process"] }

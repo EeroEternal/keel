@@ -3,8 +3,8 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use keel_core::{
-    profile_read_only, profile_strict, profile_workspace, EnforceBackend, MemorySink,
-    NullBackend, Policy, ProcessGuardBackend, Space, SpawnRequest,
+    profile_read_only, profile_strict, profile_workspace, EnforceBackend, LocalProcessBackend,
+    MemorySink, NullBackend, Policy, ProcessGuardBackend, Space, SpawnRequest,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -50,7 +50,7 @@ enum Commands {
         #[arg(long, value_enum, default_value_t = BackendChoice::ProcessGuard)]
         backend: BackendChoice,
     },
-    /// Run a command inside a temporary space (soft enforcement today).
+    /// Run a command inside a temporary space.
     Run {
         #[arg(long, value_enum, default_value_t = Profile::Workspace)]
         profile: Profile,
@@ -78,6 +78,8 @@ enum Profile {
 enum BackendChoice {
     Null,
     ProcessGuard,
+    /// Landlock (Linux) / Seatbelt (macOS). Process-wide FS; irreversible.
+    LocalProcess,
 }
 
 fn build_policy(profile: Profile, workspace: PathBuf) -> Result<Policy> {
@@ -93,6 +95,7 @@ fn make_backend(choice: BackendChoice) -> Arc<dyn keel_core::EnforceBackend> {
     match choice {
         BackendChoice::Null => Arc::new(NullBackend::new()),
         BackendChoice::ProcessGuard => Arc::new(ProcessGuardBackend::new()),
+        BackendChoice::LocalProcess => Arc::new(LocalProcessBackend::new()),
     }
 }
 
@@ -108,13 +111,20 @@ async fn main() -> Result<()> {
         Commands::Info => {
             println!("keel {}", env!("CARGO_PKG_VERSION"));
             println!("backends:");
-            for b in [NullBackend::new().info(), ProcessGuardBackend::new().info()] {
+            for b in [
+                NullBackend::new().info(),
+                ProcessGuardBackend::new().info(),
+                LocalProcessBackend::new().info(),
+            ] {
                 println!(
                     "  - {:<16} kernel_fs={} child_network={}",
                     b.name, b.kernel_fs, b.child_network
                 );
             }
             println!("pillars: Policy · Enforce · Record · Lifecycle");
+            println!(
+                "note: local-process applies irreversible process-wide FS sandbox (Landlock/Seatbelt)"
+            );
         }
         Commands::Policy {
             profile,

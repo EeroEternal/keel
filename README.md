@@ -20,8 +20,8 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.1 scaffold — usable soft loop.**  
-Policy types, record sinks, process-guard backend, `keel` CLI, and design docs land here. Kernel isolation (Landlock / Seatbelt) is next, not claimed yet.
+**v0.0.1 + local-process kernel backend.**  
+Policy types, record sinks, process-guard, **Landlock/Seatbelt via nono** (`local-process`), CLI, and design docs.
 
 ## Quick start
 
@@ -92,9 +92,14 @@ Design notes: [`docs/design.md`](docs/design.md).
 |---------|-----------|--------|
 | `null` | Record + accept policy | done |
 | `process-guard` | Soft FS/exec checks | done |
-| `local-process` | Landlock / Seatbelt | planned |
+| `local-process` | Landlock (Linux) / Seatbelt (macOS) via nono | done |
 | `local-worktree` | Git worktree / overlay | planned |
 | `remote-microvm` | Strong isolation | planned |
+
+```bash
+# Kernel FS sandbox (irreversible for the process lifetime)
+cargo run -p keel-cli -- run --backend local-process --profile workspace -- echo hello
+```
 
 ## Profiles
 

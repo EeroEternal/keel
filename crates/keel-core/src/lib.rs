@@ -8,7 +8,8 @@ pub use error::{KeelError, KeelResult};
 pub use space::{Space, SpaceHandle, SpaceState};
 
 pub use keel_enforce::{
-    BackendInfo, EnforceBackend, NullBackend, ProcessGuardBackend, SpawnRequest, SpawnedProcess,
+    BackendInfo, EnforceBackend, LocalProcessBackend, LocalProcessOptions, NullBackend,
+    ProcessGuardBackend, SpawnRequest, SpawnedProcess,
 };
 pub use keel_policy::{
     profile_read_only, profile_strict, profile_workspace, CredentialGrant, ExecPolicy, FsAccess,

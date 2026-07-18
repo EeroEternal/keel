@@ -55,11 +55,20 @@ keel run --profile read-only -- echo hello
 |------|----|-----------|--------|
 | `null` | soft checks only | no | **done** |
 | `process-guard` | soft prefix/deny rules | advisory | **done** |
-| `local-process` | Landlock / Seatbelt via a sandbox stack | seccomp (Linux) | planned |
+| `local-process` | Landlock / Seatbelt via **nono** | seccomp on spawn (Linux); parent net kept | **done (v0)** |
 | `local-worktree` | git worktree / overlay cwd | inherits | planned |
 | `remote-microvm` | guest FS | guest net policy | planned |
 
-v0 ships portable soft enforcement so the Policy/Record/Lifecycle loop is usable on every host. Kernel backends are additive and must remain **fail-closed** when a profile requires hard isolation they cannot provide.
+### `local-process` notes
+
+- Apply is **process-wide and irreversible** (one policy per process).
+- Parent process network stays open by default so the agent host can call LLM/MCP APIs.
+- `NetworkPolicy::DenyAll` restricts **child** processes on Linux via seccomp in `pre_exec` (macOS: no child-net filter yet).
+- macOS path **deny** uses Seatbelt platform rules; Linux subpath deny is advisory until a bwrap backend.
+- Set `KEEL_KERNEL_TEST=1` to run the optional apply smoke test.
+- Dependency: `nono = 0.53.0` (rustc 1.93-compatible; re-verify Seatbelt deny rules before upgrading).
+
+Portable soft backends remain the default for CLI demos; use `--backend local-process` for kernel FS.
 
 ## Policy presets
 
@@ -83,10 +92,10 @@ Sinks: `MemorySink`, `JsonlSink`, `MultiSink`.
 
 ## Roadmap
 
-1. **v0** — types, soft backends, CLI, design (this tree)
-2. **v0.1** — `JsonlSink` default path under `~/.keel/spaces/<id>/`, credential inject/revoke stubs
-3. **v0.2** — Linux Landlock + optional bwrap re-exec; macOS Seatbelt path
-4. **v0.3** — worktree backend; per-task policy rebind (new space, not in-place expand)
+1. **v0** — types, soft backends, CLI, design
+2. **v0.1** — `local-process` Landlock/Seatbelt (nono); child seccomp on Linux
+3. **v0.2** — JSONL default under `~/.keel/spaces/<id>/`; credential inject/revoke stubs
+4. **v0.3** — Linux bwrap read-deny; worktree backend; per-task rebind (new space)
 5. **v0.4** — egress allowlist enforcement; model-call Consume hooks
 6. **v1** — stable SDK + ACP/session adapters for coding agents
 
