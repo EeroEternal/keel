@@ -8,8 +8,10 @@ pub use error::{KeelError, KeelResult};
 pub use space::{Space, SpaceHandle, SpaceOptions, SpaceState};
 
 pub use keel_enforce::{
-    BackendInfo, EnforceBackend, LocalProcessBackend, LocalProcessOptions, NullBackend,
-    ProcessGuardBackend, SpawnRequest, SpawnedProcess, WorktreeBackend, WorktreeOptions,
+    local_process as backend_local_process, process_guard as backend_process_guard,
+    worktree_sandboxed, worktree_soft, BackendInfo, EnforceBackend, LocalProcessBackend,
+    LocalProcessOptions, NullBackend, ProcessGuardBackend, SpawnRequest, SpawnedProcess,
+    WorktreeBackend, WorktreeOptions,
 };
 
 #[cfg(unix)]

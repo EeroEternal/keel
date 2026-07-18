@@ -5,6 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.6] — 2026-07-18
+
+### Added
+
+- **Optimization plan** — `docs/optimization-plan.md` (phases 1–7, progress log).
+- **Backend composition** — `worktree_sandboxed` / `worktree_soft` factories; CLI `--sandbox` stacks with `--worktree`.
+- **Deny glob enforcement (Phase 2)** — expand globs for Linux bwrap; Seatbelt regex denials on macOS; soft FS match for process-guard.
+- **Testing guide** — `docs/testing.md` (default suite vs `KEEL_KERNEL_TEST`).
+
+---
+
 ## [0.0.5] — 2026-07-18
 
 ### Documentation

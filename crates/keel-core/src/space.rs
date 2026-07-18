@@ -28,6 +28,10 @@ pub struct SpaceOptions {
     pub memory_events: bool,
     /// Write `policy.json` next to events (default true when persist_events).
     pub persist_policy: bool,
+    /// If true, missing credential sources fail spawn (default false).
+    pub strict_credentials: bool,
+    /// If true, emit `Violation` events when check_fs / check_egress denies (default true).
+    pub record_violations: bool,
 }
 
 impl Default for SpaceOptions {
@@ -36,6 +40,8 @@ impl Default for SpaceOptions {
             persist_events: true,
             memory_events: false,
             persist_policy: true,
+            strict_credentials: false,
+            record_violations: true,
         }
     }
 }
@@ -47,6 +53,7 @@ pub struct Space {
     backend: Arc<dyn EnforceBackend>,
     sink: Arc<dyn RecordSink>,
     events_path: Option<PathBuf>,
+    opts: SpaceOptions,
     state: RwLock<SpaceState>,
 }
 
@@ -88,13 +95,23 @@ impl SpaceHandle {
             .backend
             .check_fs(&self.inner.policy, path, write)
             .await?;
+        let op = if write { "write" } else { "read" };
         self.inner
             .emit(EventKind::FsAccess {
                 path: path.to_path_buf(),
-                operation: if write { "write" } else { "read" }.into(),
+                operation: op.into(),
                 allowed,
             })
             .await?;
+        if !allowed && self.inner.opts.record_violations {
+            self.inner
+                .emit(EventKind::Violation {
+                    operation: op.into(),
+                    target: path.display().to_string(),
+                    detail: Some("fs policy soft deny".into()),
+                })
+                .await?;
+        }
         Ok(allowed)
     }
 
@@ -113,6 +130,19 @@ impl SpaceHandle {
                 allowed,
             })
             .await?;
+        if !allowed && self.inner.opts.record_violations {
+            let detail = match &decision {
+                keel_policy::EgressDecision::Deny { reason } => Some(reason.clone()),
+                keel_policy::EgressDecision::Allow => None,
+            };
+            self.inner
+                .emit(EventKind::Violation {
+                    operation: "connect".into(),
+                    target: format!("{host}:{port}"),
+                    detail,
+                })
+                .await?;
+        }
         Ok(allowed)
     }
 
@@ -123,7 +153,10 @@ impl SpaceHandle {
         }
 
         // JIT credentials: resolve from parent env/files, inject into child env.
-        let resolved = keel_enforce::resolve_credentials(&self.inner.policy, false)?;
+        let resolved = keel_enforce::resolve_credentials(
+            &self.inner.policy,
+            self.inner.opts.strict_credentials,
+        )?;
         let issued = keel_enforce::inject_into_env(&mut req.env, &resolved);
         for name in &issued {
             self.inner
@@ -260,6 +293,7 @@ impl Space {
             backend: backend.clone(),
             sink: sink.clone(),
             events_path,
+            opts: opts.clone(),
             state: RwLock::new(SpaceState::Creating),
         });
 
@@ -360,6 +394,7 @@ mod tests {
                 persist_events: false,
                 memory_events: true,
                 persist_policy: false,
+                ..Default::default()
             },
             Some(sink.clone()),
         )
@@ -410,6 +445,7 @@ mod tests {
                 persist_events: false,
                 memory_events: true,
                 persist_policy: false,
+                ..Default::default()
             },
             Some(sink),
         )

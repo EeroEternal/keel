@@ -68,6 +68,11 @@ pub fn soft_fs_allowed(policy: &Policy, path: &Path, write: bool) -> bool {
         }
     }
 
+    // Deny globs (soft).
+    if crate::deny_glob::path_matches_deny_glob(policy, &path) {
+        return false;
+    }
+
     if write {
         for p in policy.read_write_paths() {
             let allow = resolve_against_workspace(policy, p);

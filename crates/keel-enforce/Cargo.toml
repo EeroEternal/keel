@@ -23,6 +23,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 dunce = { workspace = true }
 dirs = { workspace = true }
+globset = "0.4"
+ignore = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 # Pinned: Seatbelt deny/platform-rule behavior can change across nono releases.

@@ -3,9 +3,11 @@
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
 use keel_core::{
-    check_egress, profile_read_only, profile_strict, profile_workspace, CredentialGrant,
-    EnforceBackend, LocalProcessBackend, NetworkPolicy, NetworkRule, NullBackend, Policy,
-    ProcessGuardBackend, Space, SpaceOptions, SpawnRequest, TaskId, WorktreeBackend,
+    backend_local_process, backend_process_guard, check_egress, profile_read_only,
+    profile_strict, profile_workspace, worktree_sandboxed, worktree_soft, CredentialGrant,
+    EnforceBackend, LocalProcessBackend, LocalProcessOptions, NetworkPolicy, NetworkRule,
+    NullBackend, Policy, ProcessGuardBackend, Space, SpaceOptions, SpawnRequest, TaskId,
+    WorktreeBackend, WorktreeOptions,
 };
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -86,9 +88,13 @@ enum Commands {
         /// Inject a credential: `NAME=env:VAR` or `NAME=file:PATH` (repeatable).
         #[arg(long = "cred")]
         credentials: Vec<String>,
-        /// Run inside a worktree of the workspace (implies worktree backend).
+        /// Run inside a worktree of the workspace.
         #[arg(long)]
         worktree: bool,
+        /// Enable local-process kernel sandbox (Landlock/Seatbelt on children).
+        /// Combined with `--worktree` → worktree + local-process (recommended).
+        #[arg(long)]
+        sandbox: bool,
         /// Bind a task id (recorded on policy / events).
         #[arg(long)]
         task_id: Option<String>,
@@ -166,10 +172,33 @@ fn apply_network_overrides(
 fn make_backend(choice: BackendChoice) -> Arc<dyn keel_core::EnforceBackend> {
     match choice {
         BackendChoice::Null => Arc::new(NullBackend::new()),
-        BackendChoice::ProcessGuard => Arc::new(ProcessGuardBackend::new()),
-        BackendChoice::LocalProcess => Arc::new(LocalProcessBackend::new()),
-        BackendChoice::Worktree => Arc::new(WorktreeBackend::new()),
+        BackendChoice::ProcessGuard => backend_process_guard(),
+        BackendChoice::LocalProcess => backend_local_process(LocalProcessOptions::default()),
+        BackendChoice::Worktree => worktree_soft(WorktreeOptions::default()),
     }
+}
+
+/// Phase 1 composition: optional worktree + optional sandbox (local-process).
+fn make_backend_composed(
+    choice: BackendChoice,
+    worktree: bool,
+    sandbox: bool,
+) -> Arc<dyn keel_core::EnforceBackend> {
+    let want_lp = sandbox || matches!(choice, BackendChoice::LocalProcess);
+    let want_wt = worktree || matches!(choice, BackendChoice::Worktree);
+
+    if want_wt && want_lp {
+        eprintln!("keel: using composed backend worktree ⊕ local-process");
+        return worktree_sandboxed(WorktreeOptions::default(), LocalProcessOptions::default());
+    }
+    if want_wt {
+        eprintln!("keel: using local-worktree (soft process-guard inside)");
+        return worktree_soft(WorktreeOptions::default());
+    }
+    if want_lp {
+        return backend_local_process(LocalProcessOptions::default());
+    }
+    make_backend(choice)
 }
 
 fn parse_cred(spec: &str) -> Result<CredentialGrant> {
@@ -243,6 +272,7 @@ async fn main() -> Result<()> {
                     persist_events: false,
                     memory_events: true,
                     persist_policy: false,
+                    ..Default::default()
                 },
             )
             .await?;
@@ -288,6 +318,7 @@ async fn main() -> Result<()> {
             allow_hosts,
             credentials,
             worktree,
+            sandbox,
             task_id,
             cmd,
         } => {
@@ -304,23 +335,23 @@ async fn main() -> Result<()> {
                 policy.task_id = Some(TaskId::from_string(tid));
             }
 
-            let mut backend = backend;
-            if worktree {
-                backend = BackendChoice::Worktree;
-            } else if !allow_hosts.is_empty()
+            let mut sandbox = sandbox;
+            if !allow_hosts.is_empty()
                 && matches!(backend, BackendChoice::ProcessGuard | BackendChoice::Null)
+                && !sandbox
             {
-                eprintln!("keel: --allow-host set; using local-process backend for egress proxy");
-                backend = BackendChoice::LocalProcess;
+                eprintln!("keel: --allow-host set; enabling --sandbox (local-process) for egress proxy");
+                sandbox = true;
             }
 
             let space = Space::create_with(
                 policy,
-                make_backend(backend),
+                make_backend_composed(backend, worktree, sandbox),
                 SpaceOptions {
                     persist_events: !no_persist,
                     memory_events: trace,
                     persist_policy: !no_persist,
+                    ..Default::default()
                 },
             )
             .await?;

@@ -96,14 +96,29 @@ pub fn policy_to_capability_set(policy: &Policy, opts: MapOptions) -> EnforceRes
 
     for rule in policy.deny_paths() {
         if rule.glob {
-            warn!(
-                pattern = %rule.path.display(),
-                "deny globs not kernel-enforced in local-process v0"
-            );
-            continue;
+            continue; // handled below (platform-specific)
         }
         let path = resolve_ws(policy, &rule.path);
         apply_deny_path(&mut caps, &path)?;
+    }
+
+    // Deny globs: macOS Seatbelt regex; Linux expanded paths → bwrap at spawn.
+    #[cfg(target_os = "macos")]
+    {
+        let n = crate::deny_glob::apply_deny_globs_seatbelt(&mut caps, policy)?;
+        if n > 0 {
+            tracing::info!(count = n, "applied Seatbelt deny globs");
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Expansion is used at spawn for bwrap; here we only validate patterns.
+        let expanded = crate::deny_glob::expand_deny_globs(policy)?;
+        tracing::debug!(
+            matches = expanded.len(),
+            "deny globs expanded for later bwrap (Linux)"
+        );
+        let _ = expanded;
     }
 
     // Network mode for the sandboxed process (typically the child).

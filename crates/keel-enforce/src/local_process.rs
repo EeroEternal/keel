@@ -245,7 +245,10 @@ impl LocalProcessBackend {
 
         #[cfg(target_os = "linux")]
         {
-            let denies = crate::bwrap::deny_paths_for_bwrap(policy);
+            let mut denies = crate::bwrap::deny_paths_for_bwrap(policy);
+            if let Ok(extra) = crate::deny_glob::expand_deny_globs(policy) {
+                denies.extend(extra);
+            }
             if !denies.is_empty() && !crate::bwrap::bwrap_available() {
                 let msg = "Linux read-deny requires bubblewrap (bwrap); install it or clear deny paths";
                 if self.opts.require_kernel {
@@ -381,7 +384,15 @@ impl LocalProcessBackend {
         // Prefer bwrap outer command when Linux deny paths exist.
         #[cfg(target_os = "linux")]
         let mut cmd = {
-            let deny_paths = crate::bwrap::deny_paths_for_bwrap(policy);
+            let mut deny_paths = crate::bwrap::deny_paths_for_bwrap(policy);
+            // Phase 2: expand deny globs into concrete paths for bwrap.
+            match crate::deny_glob::expand_deny_globs(policy) {
+                Ok(extra) => deny_paths.extend(extra),
+                Err(e) if require_kernel => return Err(e),
+                Err(e) => warn!(error = %e, "deny glob expand failed"),
+            }
+            deny_paths.sort();
+            deny_paths.dedup();
             if let Some(mut bwrap_cmd) = crate::bwrap::wrap_command(
                 &req.program,
                 &req.args,

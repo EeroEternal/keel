@@ -98,7 +98,9 @@ Default space layout:
 
 Override root with `$KEEL_HOME`. CLI: `--no-persist` to skip disk logs.
 
-Portable soft backends remain the default for casual CLI demos; use `--backend local-process` for kernel FS.
+Portable soft backends remain the default for casual CLI demos; use `--sandbox` / `--backend local-process` for kernel FS. Compose with `--worktree --sandbox` for worktree ⊕ local-process.
+
+Active improvement track: [`optimization-plan.md`](./optimization-plan.md).
 
 ## Policy presets
 

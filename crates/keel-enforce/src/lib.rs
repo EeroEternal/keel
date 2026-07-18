@@ -8,7 +8,9 @@
 //!   Linux read-deny uses bubblewrap bind-over.
 
 mod backend;
+mod compose;
 mod credentials;
+mod deny_glob;
 mod egress_proxy;
 mod error;
 mod null;
@@ -28,9 +30,13 @@ mod bwrap;
 mod local_process;
 
 pub use backend::{BackendInfo, EnforceBackend, SpawnRequest, SpawnedProcess};
+pub use compose::{local_process, process_guard, worktree_sandboxed, worktree_soft};
 pub use credentials::{
     grant_names, inject_into_env, resolve_credentials, revoke_resolved, CredentialSourceKind,
     ResolvedCredential,
+};
+pub use deny_glob::{
+    expand_deny_globs, glob_to_seatbelt_regex, path_matches_deny_glob, DENY_GLOB_MAX_MATCHES,
 };
 pub use egress_proxy::{EgressProxy, EGRESS_PROXY_PORT_ENV};
 pub use error::{EnforceError, EnforceResult};
