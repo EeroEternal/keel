@@ -35,10 +35,25 @@ let sink = Arc::new(MemorySink::new());
 let backend = Arc::new(ProcessGuardBackend::new());
 let space = Space::create(policy, backend, sink).await?;
 
-space.check_fs(path, write).await?;
-space.spawn(SpawnRequest::new("rg").args(["TODO", "."])).await?;
+space.check_fs(path, write).await?; // soft preflight
+space.fs().write(path, bytes).await?; // perform I/O under policy + audit
+let exit = space
+    .spawn(SpawnRequest::new("rg").args(["TODO", "."]))
+    .await?
+    .wait_timeout(std::time::Duration::from_secs(60))
+    .await?;
 space.destroy().await?;
 ```
+
+### Host integration notes (Zene and similar)
+
+| Concern | Approach |
+|---------|----------|
+| MCP stdio | `StdioMode::Piped` on stdin/stdout; `ManagedProcess::take_*` |
+| Shell process trees | Default process group + `wait_timeout` / `cancel` kill the group |
+| Secret args in logs | `SpawnRequest::audit_args(false)` → redacted `Exec` event |
+| Agent file tools | `SpaceFs` — not only `check_fs` |
+
 
 CLI:
 

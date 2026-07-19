@@ -18,4 +18,7 @@ pub enum KeelError {
 
     #[error(transparent)]
     Other(#[from] anyhow::Error),
+
+    #[error("{0}")]
+    Msg(String),
 }

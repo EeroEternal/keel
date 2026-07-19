@@ -411,7 +411,7 @@ async fn main() -> Result<()> {
 
             let req = SpawnRequest::new(cmd[0].clone()).args(cmd[1..].to_vec());
             let spawned = space.spawn(req).await?;
-            let output = spawned.child.wait_with_output().await?;
+            let (_exit, output) = spawned.wait_with_output().await?;
 
             use std::io::Write;
             let _ = std::io::stdout().write_all(&output.stdout);

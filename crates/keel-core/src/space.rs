@@ -1,6 +1,8 @@
 use crate::error::{KeelError, KeelResult};
+use crate::managed::ManagedProcess;
+use crate::space_fs::SpaceFs;
 use chrono::Utc;
-use keel_enforce::{EnforceBackend, SpawnRequest, SpawnedProcess};
+use keel_enforce::{EnforceBackend, SpawnRequest};
 use keel_policy::{Policy, SpaceId};
 use keel_record::{
     default_space_sink, space_policy_path, EventKind, MemorySink, MultiSink, RecordEvent,
@@ -8,6 +10,7 @@ use keel_record::{
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
@@ -146,7 +149,15 @@ impl SpaceHandle {
         Ok(allowed)
     }
 
-    pub async fn spawn(&self, mut req: SpawnRequest) -> KeelResult<SpawnedProcess> {
+    /// Policy-constrained FS API for host tools (Read/Write/Edit). Prefer this over raw
+    /// `std::fs` plus [`Self::check_fs`].
+    pub fn fs(&self) -> SpaceFs {
+        SpaceFs::new(self.clone())
+    }
+
+    /// Spawn under the space. Returns a [`ManagedProcess`] with stdio access, process-group
+    /// kill on timeout/cancel, and `ExecFinished` audit events.
+    pub async fn spawn(&self, mut req: SpawnRequest) -> KeelResult<ManagedProcess> {
         self.inner.ensure_open().await?;
         if self.inner.policy.is_expired(Utc::now()) {
             return Err(keel_enforce::EnforceError::PolicyExpired.into());
@@ -168,6 +179,7 @@ impl SpaceHandle {
         // Drop secret material from this task asap (child already has env copy).
         keel_enforce::revoke_resolved(resolved);
 
+        let program = req.program.clone();
         let child = self
             .inner
             .backend
@@ -178,7 +190,20 @@ impl SpaceHandle {
                 self.inner.sink.clone(),
             )
             .await?;
-        Ok(child)
+        Ok(ManagedProcess {
+            inner: child,
+            space: self.inner.clone(),
+            program,
+        })
+    }
+
+    /// Spawn and wait with a timeout (kills the process group on expiry).
+    pub async fn spawn_timeout(
+        &self,
+        req: SpawnRequest,
+        timeout: Duration,
+    ) -> KeelResult<keel_enforce::ProcessExit> {
+        self.spawn(req).await?.wait_timeout(timeout).await
     }
 
     /// Open a **new** space for a subtask with a policy that can only shrink reach.
@@ -212,7 +237,7 @@ impl SpaceHandle {
     ) -> KeelResult<std::process::Output> {
         let req = SpawnRequest::new(program).args(args.iter().map(|s| s.to_string()));
         let spawned = self.spawn(req).await?;
-        let output = spawned.child.wait_with_output().await?;
+        let (_exit, output) = spawned.wait_with_output().await?;
         Ok(output)
     }
 
@@ -332,7 +357,7 @@ impl Space {
         }
     }
 
-    async fn emit(&self, event: EventKind) -> KeelResult<()> {
+    pub(crate) async fn emit(&self, event: EventKind) -> KeelResult<()> {
         self.sink
             .emit(RecordEvent::new(
                 self.id.clone(),
@@ -455,6 +480,123 @@ mod tests {
         let out = space.run_capture("echo", &["keel-ok"]).await.unwrap();
         assert!(out.status.success());
         assert!(String::from_utf8_lossy(&out.stdout).contains("keel-ok"));
+        space.destroy().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn spawn_timeout_kills_sleep() {
+        use keel_enforce::{SpawnRequest, TerminationReason};
+        use std::time::Duration;
+
+        let policy = profile_workspace(Path::new("/tmp")).unwrap();
+        let sink = Arc::new(MemorySink::new());
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create_with_sink(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+                ..Default::default()
+            },
+            Some(sink.clone()),
+        )
+        .await
+        .unwrap();
+
+        // Shell that would outlive a direct kill of the shell without process group.
+        let req = SpawnRequest::new("sh").args(["-c", "sleep 30"]);
+        let exit = space
+            .spawn(req)
+            .await
+            .unwrap()
+            .wait_timeout(Duration::from_millis(200))
+            .await
+            .unwrap();
+        assert_eq!(exit.termination_reason, TerminationReason::TimedOut);
+
+        let events = sink.events().await;
+        assert!(events.iter().any(|e| matches!(
+            &e.event,
+            EventKind::ExecFinished {
+                termination_reason,
+                ..
+            } if termination_reason == "timed_out"
+        )));
+        space.destroy().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn space_fs_write_read_roundtrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        let policy = profile_workspace(ws).unwrap();
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create_with(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let path = ws.join("note.txt");
+        space.fs().write(&path, b"hello-zene").await.unwrap();
+        let body = space.fs().read_to_string(&path).await.unwrap();
+        assert_eq!(body, "hello-zene");
+
+        // Outside workspace write should fail.
+        let denied = space.fs().write("/etc/keel-should-not-write", b"x").await;
+        assert!(denied.is_err());
+        space.destroy().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn audit_args_false_redacts_exec_event() {
+        use keel_enforce::SpawnRequest;
+
+        let policy = profile_workspace(Path::new("/tmp")).unwrap();
+        let sink = Arc::new(MemorySink::new());
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create_with_sink(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+                ..Default::default()
+            },
+            Some(sink.clone()),
+        )
+        .await
+        .unwrap();
+
+        let req = SpawnRequest::new("echo")
+            .args(["token=super-secret"])
+            .audit_args(false);
+        let (_exit, out) = space.spawn(req).await.unwrap().wait_with_output().await.unwrap();
+        assert!(out.status.success());
+
+        let events = sink.events().await;
+        let exec = events.iter().find_map(|e| match &e.event {
+            EventKind::Exec {
+                args,
+                args_redacted,
+                ..
+            } => Some((args.clone(), *args_redacted)),
+            _ => None,
+        });
+        let (args, redacted) = exec.expect("Exec event");
+        assert!(redacted);
+        assert!(args.is_empty());
+        assert!(!format!("{events:?}").contains("super-secret"));
         space.destroy().await.unwrap();
     }
 }

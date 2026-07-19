@@ -29,12 +29,49 @@ pub fn normalize(path: &Path) -> PathBuf {
 }
 
 /// Resolve `path` against the policy workspace when it is relative.
-fn resolve_against_workspace(policy: &Policy, path: &Path) -> PathBuf {
+pub fn resolve_against_workspace(policy: &Policy, path: &Path) -> PathBuf {
     if path.is_absolute() {
         normalize(path)
     } else {
         normalize(&policy.workspace.join(path))
     }
+}
+
+/// Resolve a path for SpaceFs-style I/O: workspace-relative join, then
+/// canonicalize existing paths (follows symlinks). For new paths, canonicalize
+/// the nearest existing parent when possible.
+///
+/// Callers must still run [`soft_fs_allowed`] on the result (and ideally on the
+/// logical path) so symlink escape outside write roots is denied.
+pub fn soft_fs_resolve(policy: &Policy, path: &Path, _write: bool) -> Result<PathBuf, String> {
+    let joined = resolve_against_workspace(policy, path);
+    if joined.exists() {
+        return dunce::canonicalize(&joined)
+            .map(|p| normalize(&p))
+            .map_err(|e| format!("canonicalize {}: {e}", joined.display()));
+    }
+
+    // New path: resolve parent chain.
+    let mut parent = joined.parent().map(Path::to_path_buf);
+    let file_name = joined
+        .file_name()
+        .ok_or_else(|| format!("invalid path: {}", joined.display()))?
+        .to_os_string();
+
+    while let Some(ref p) = parent {
+        if p.as_os_str().is_empty() {
+            break;
+        }
+        if p.exists() {
+            let canon = dunce::canonicalize(p)
+                .map(|x| normalize(&x))
+                .unwrap_or_else(|_| normalize(p));
+            return Ok(canon.join(file_name));
+        }
+        parent = p.parent().map(Path::to_path_buf);
+    }
+
+    Ok(joined)
 }
 
 /// Soft filesystem allow check.
@@ -153,6 +190,7 @@ impl EnforceBackend for ProcessGuardBackend {
         if policy.is_expired(Utc::now()) {
             return Err(EnforceError::PolicyExpired);
         }
+        let (audit_args, args_redacted) = req.audit_args_for_event();
         if matches!(policy.exec, ExecPolicy::Deny) {
             let _ = sink
                 .emit(RecordEvent::new(
@@ -161,8 +199,9 @@ impl EnforceBackend for ProcessGuardBackend {
                     policy.task_id.clone(),
                     EventKind::Exec {
                         program: req.program.clone(),
-                        args: req.args.clone(),
+                        args: audit_args,
                         allowed: false,
+                        args_redacted,
                     },
                 ))
                 .await;
@@ -199,14 +238,16 @@ impl EnforceBackend for ProcessGuardBackend {
                 policy.task_id.clone(),
                 EventKind::Exec {
                     program: req.program.clone(),
-                    args: req.args.clone(),
+                    args: audit_args,
                     allowed: true,
+                    args_redacted,
                 },
             ))
             .await;
 
+        let process_group = req.process_group;
         let child = base_command(&req).spawn()?;
-        Ok(SpawnedProcess { child })
+        Ok(SpawnedProcess::new(child, process_group))
     }
 
     async fn destroy(&self, _policy: &Policy, _sink: Arc<dyn RecordSink>) -> EnforceResult<()> {

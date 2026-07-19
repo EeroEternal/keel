@@ -2,15 +2,20 @@
 //! as a durable **execution space**.
 
 mod error;
+mod managed;
 mod space;
+mod space_fs;
 
 pub use error::{KeelError, KeelResult};
+pub use managed::ManagedProcess;
 pub use space::{Space, SpaceHandle, SpaceOptions, SpaceState};
+pub use space_fs::{SpaceFs, SpacePathMeta};
 
 pub use keel_enforce::{
     local_process as backend_local_process, process_guard as backend_process_guard,
-    worktree_sandboxed, worktree_soft, BackendInfo, EnforceBackend, LocalProcessBackend,
-    LocalProcessOptions, NullBackend, ProcessGuardBackend, SpawnRequest, SpawnedProcess,
+    soft_fs_allowed, soft_fs_resolve, worktree_sandboxed, worktree_soft, BackendInfo,
+    EnforceBackend, LocalProcessBackend, LocalProcessOptions, NullBackend, ProcessExit,
+    ProcessGuardBackend, SpawnRequest, SpawnedProcess, StdioMode, TerminationReason,
     WorktreeBackend, WorktreeOptions,
 };
 

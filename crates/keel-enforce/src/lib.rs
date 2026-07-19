@@ -29,7 +29,10 @@ mod bwrap;
 
 mod local_process;
 
-pub use backend::{BackendInfo, EnforceBackend, SpawnRequest, SpawnedProcess};
+pub use backend::{
+    BackendInfo, EnforceBackend, ProcessExit, SpawnRequest, SpawnedProcess, StdioMode,
+    TerminationReason,
+};
 pub use compose::{local_process, process_guard, worktree_sandboxed, worktree_soft};
 pub use credentials::{
     grant_names, inject_into_env, resolve_credentials, revoke_resolved, CredentialSourceKind,
@@ -42,7 +45,7 @@ pub use egress_proxy::{EgressProxy, EGRESS_PROXY_PORT_ENV};
 pub use error::{EnforceError, EnforceResult};
 pub use local_process::{LocalProcessBackend, LocalProcessOptions};
 pub use null::NullBackend;
-pub use process_guard::ProcessGuardBackend;
+pub use process_guard::{soft_fs_allowed, soft_fs_resolve, ProcessGuardBackend};
 pub use worktree::{WorktreeBackend, WorktreeOptions};
 
 #[cfg(all(unix, feature = "kernel"))]

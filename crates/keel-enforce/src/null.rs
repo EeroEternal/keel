@@ -65,6 +65,7 @@ impl EnforceBackend for NullBackend {
         if policy.is_expired(Utc::now()) {
             return Err(EnforceError::PolicyExpired);
         }
+        let (audit_args, args_redacted) = req.audit_args_for_event();
         if matches!(policy.exec, ExecPolicy::Deny) {
             sink.emit(RecordEvent::new(
                 space_id.clone(),
@@ -72,8 +73,9 @@ impl EnforceBackend for NullBackend {
                 policy.task_id.clone(),
                 EventKind::Exec {
                     program: req.program.clone(),
-                    args: req.args.clone(),
+                    args: audit_args,
                     allowed: false,
+                    args_redacted,
                 },
             ))
             .await?;
@@ -96,15 +98,17 @@ impl EnforceBackend for NullBackend {
             policy.task_id.clone(),
             EventKind::Exec {
                 program: req.program.clone(),
-                args: req.args.clone(),
+                args: audit_args,
                 allowed: true,
+                args_redacted,
             },
         ))
         .await?;
 
+        let process_group = req.process_group;
         let mut cmd = base_command(&req);
         let child = cmd.spawn()?;
-        Ok(SpawnedProcess { child })
+        Ok(SpawnedProcess::new(child, process_group))
     }
 
     async fn destroy(&self, _policy: &Policy, _sink: Arc<dyn RecordSink>) -> EnforceResult<()> {

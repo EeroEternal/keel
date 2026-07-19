@@ -28,8 +28,23 @@ pub enum EventKind {
     },
     Exec {
         program: String,
+        /// Empty when [`args_redacted`] is true.
         args: Vec<String>,
         allowed: bool,
+        /// When true, `args` were intentionally omitted (secrets / long shell -c).
+        #[serde(default)]
+        args_redacted: bool,
+    },
+    /// Process finished (exit, timeout, cancel, signal).
+    ExecFinished {
+        program: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        exit_code: Option<i32>,
+        duration_ms: u64,
+        /// `exited` | `timed_out` | `cancelled` | `killed` | `signal` | `unknown`
+        termination_reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signal: Option<i32>,
     },
     CredentialIssued {
         name: String,

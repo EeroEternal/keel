@@ -20,9 +20,9 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.8** — published on [crates.io](https://crates.io) under the **`keel-exec-*`** package names (see below).  
-`sandbox.toml` profiles, composition (`--worktree --sandbox`), deny globs, egress allowlist, worktree, credentials.  
-See [CHANGELOG.md](CHANGELOG.md) and [optimization plan](docs/optimization-plan.md).
+**v0.0.9** — published on [crates.io](https://crates.io) under the **`keel-exec-*`** package names (see below).  
+Stdio modes + process-group lifecycle + `SpaceFs` + `audit_args` (host/MCP integration).  
+See [CHANGELOG.md](CHANGELOG.md) and [integration guide](docs/integration.md).
 
 ## Install
 
@@ -39,17 +39,19 @@ Requires **Rust 1.93+**.
 
 ```toml
 [dependencies]
-keel-exec-core = "0.0.8"
+keel-exec-core = "0.0.9"
 # optional direct deps:
-# keel-exec-policy = "0.0.8"
-# keel-exec-enforce = "0.0.8"
-# keel-exec-record = "0.0.8"
+# keel-exec-policy = "0.0.9"
+# keel-exec-enforce = "0.0.9"
+# keel-exec-record = "0.0.9"
 ```
 
 Rust imports keep the short crate names (`keel_core`, `keel_policy`, …):
 
 ```rust
-use keel_core::{profile_workspace, MemorySink, ProcessGuardBackend, Space, SpawnRequest};
+use keel_core::{
+    profile_workspace, ProcessGuardBackend, Space, SpawnRequest, StdioMode,
+};
 ```
 
 ### crates.io naming
@@ -88,21 +90,41 @@ cargo run -p keel-exec-cli -- run --trace --profile read-only -- /bin/ls /
 
 ```rust
 use std::sync::Arc;
+use std::time::Duration;
 use keel_core::{
-    profile_workspace, MemorySink, ProcessGuardBackend, Space, SpawnRequest,
+    profile_workspace, MemorySink, ProcessGuardBackend, Space, SpaceOptions, SpawnRequest,
+    StdioMode,
 };
 
 # async fn demo() -> anyhow::Result<()> {
 let policy = profile_workspace(std::env::current_dir()?.as_path())?;
 let sink = Arc::new(MemorySink::new());
 let backend = Arc::new(ProcessGuardBackend::new());
-let space = Space::create(policy, backend, sink).await?;
+let space = Space::create_with_sink(
+    policy,
+    backend,
+    SpaceOptions {
+        persist_events: false,
+        memory_events: true,
+        ..Default::default()
+    },
+    Some(sink),
+)
+.await?;
 
-assert!(space.check_fs(std::path::Path::new("README.md"), true).await?);
-let mut child = space
+// Tool FS under policy (not just a soft check):
+// space.fs().write("out.txt", b"ok").await?;
+
+let exit = space
     .spawn(SpawnRequest::new("echo").args(["keel"]))
+    .await?
+    .wait_timeout(Duration::from_secs(5))
     .await?;
-let _status = child.child.wait().await?;
+assert!(exit.success());
+
+// MCP-style stdio:
+// SpawnRequest::new("server").stdin(StdioMode::Piped).stdout(StdioMode::Piped)
+
 space.destroy().await?;
 # Ok(())
 # }

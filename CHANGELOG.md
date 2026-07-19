@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.9] — 2026-07-19
+
+### Added (Zene / host integration)
+
+- **`StdioMode`** on `SpawnRequest` — `null` / `inherit` / `piped` for stdin, stdout, stderr (defaults: null / piped / piped). MCP stdio can use `.stdin(StdioMode::Piped)`.
+- **Process-tree lifecycle** — Unix children default to their own process group; `ManagedProcess::wait_timeout` / `cancel` kill the group (not only the shell), then wait.
+- **`ProcessExit`** — `exit_code`, `duration`, `termination_reason` (`exited` | `timed_out` | `cancelled` | `killed` | `signal` | `unknown`), optional `signal`.
+- **`EventKind::ExecFinished`** audit event after managed wait.
+- **`audit_args: false`** on `SpawnRequest` — Exec events omit args (`args_redacted: true`) so `bash -lc` secrets are not written to `events.jsonl`.
+- **`SpaceFs`** (`space.fs()`) — policy-constrained `read` / `write` / `create` / `delete` / `rename` / `metadata` with path resolve (symlink-aware best-effort) + `FsAccess` audit. Soft boundary for host tools; not a replacement for kernel child sandboxes.
+
+### Changed
+
+- `SpaceHandle::spawn` returns **`ManagedProcess`** (stdio take + tree wait) instead of bare `SpawnedProcess`. Use `.into_spawned()` for the low-level handle.
+- `Exec` events gain `args_redacted` (default false for older logs).
+
+---
+
 ## [0.0.8] — 2026-07-19
 
 ### Changed

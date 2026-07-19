@@ -153,6 +153,7 @@ impl EnforceBackend for LocalProcessBackend {
         if policy.is_expired(Utc::now()) {
             return Err(EnforceError::PolicyExpired);
         }
+        let (audit_args, args_redacted) = req.audit_args_for_event();
         if matches!(policy.exec, ExecPolicy::Deny) {
             let _ = sink
                 .emit(RecordEvent::new(
@@ -161,8 +162,9 @@ impl EnforceBackend for LocalProcessBackend {
                     policy.task_id.clone(),
                     EventKind::Exec {
                         program: req.program.clone(),
-                        args: req.args.clone(),
+                        args: audit_args,
                         allowed: false,
+                        args_redacted,
                     },
                 ))
                 .await;
@@ -185,8 +187,9 @@ impl EnforceBackend for LocalProcessBackend {
                 policy.task_id.clone(),
                 EventKind::Exec {
                     program: req.program.clone(),
-                    args: req.args.clone(),
+                    args: audit_args,
                     allowed: true,
+                    args_redacted,
                 },
             ))
             .await;
@@ -198,9 +201,10 @@ impl EnforceBackend for LocalProcessBackend {
 
         #[cfg(not(all(unix, feature = "kernel")))]
         {
+            let process_group = req.process_group;
             let mut cmd = base_command(&req);
             let child = cmd.spawn()?;
-            Ok(SpawnedProcess { child })
+            Ok(SpawnedProcess::new(child, process_group))
         }
     }
 
@@ -400,11 +404,13 @@ impl LocalProcessBackend {
                 req.cwd.as_deref(),
                 &req.env,
             )? {
-                bwrap_cmd
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped());
+                crate::backend::apply_stdio_std(&mut bwrap_cmd, &req);
                 let mut cmd = tokio::process::Command::from(bwrap_cmd);
+                #[cfg(unix)]
+                if req.process_group {
+                    cmd.process_group(0);
+                }
+                cmd.kill_on_drop(true);
                 attach_child_hooks(
                     &mut cmd,
                     isolate,
@@ -441,6 +447,7 @@ impl LocalProcessBackend {
             cmd
         };
 
+        let process_group = req.process_group;
         let child = cmd.spawn().map_err(|e| {
             if let Some(pf) = &policy_file {
                 let _ = std::fs::remove_file(pf);
@@ -448,7 +455,7 @@ impl LocalProcessBackend {
             e
         })?;
 
-        Ok(SpawnedProcess { child })
+        Ok(SpawnedProcess::new(child, process_group))
     }
 }
 

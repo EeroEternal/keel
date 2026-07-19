@@ -964,7 +964,7 @@ dependencies = [
 
 [[package]]
 name = "keel-exec-cli"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "clap",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "keel-exec-core"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -997,7 +997,7 @@ dependencies = [
 
 [[package]]
 name = "keel-exec-enforce"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "keel-exec-policy"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "chrono",
  "serde",
@@ -1033,7 +1033,7 @@ dependencies = [
 
 [[package]]
 name = "keel-exec-record"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "async-trait",
  "chrono",

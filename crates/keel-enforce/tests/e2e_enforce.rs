@@ -138,6 +138,7 @@ async fn kernel_child_write_isolation() {
         .await
         .unwrap();
     let out = child.child.wait_with_output().await.unwrap();
+    // Note: e2e uses backend.spawn → SpawnedProcess (not ManagedProcess).
     let stdout = String::from_utf8_lossy(&out.stdout);
     // On platforms where sandbox applies, write is blocked.
     // If sandbox apply failed soft, this may still WRITE — only assert when BLOCKED.

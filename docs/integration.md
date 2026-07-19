@@ -10,7 +10,7 @@ imports still use `keel_core` / `keel_policy` / etc.
 
 ```toml
 [dependencies]
-keel-exec-core = "0.0.8"
+keel-exec-core = "0.0.9"
 ```
 
 ```bash
@@ -22,9 +22,10 @@ cargo install keel-exec-cli
 
 ```rust
 use std::sync::Arc;
+use std::time::Duration;
 use keel_core::{
     profile_workspace, worktree_sandboxed, LocalProcessOptions, Space, SpaceOptions,
-    SpawnRequest, WorktreeOptions,
+    SpawnRequest, StdioMode, WorktreeOptions,
 };
 
 # async fn example() -> anyhow::Result<()> {
@@ -50,23 +51,51 @@ let space = Space::create_with(
 )
 .await?;
 
-// Before a tool call (optional preflight):
-// assert!(space.check_fs(Path::new("src/main.rs"), true).await?);
-// assert!(space.check_egress("api.x.ai", 443).await?);
+// Host tools: prefer SpaceFs over raw std::fs + check_fs.
+// space.fs().write("src/main.rs", code).await?;
 
-let mut child = space
-    .spawn(SpawnRequest::new("cargo").args(["test"]))
+// MCP stdio: pipe stdin/stdout into the child
+// let mut mcp = space.spawn(
+//     SpawnRequest::new("my-mcp-server")
+//         .stdin(StdioMode::Piped)
+//         .stdout(StdioMode::Piped)
+//         .stderr(StdioMode::Inherit),
+// ).await?;
+// let stdin = mcp.take_stdin();
+// let stdout = mcp.take_stdout();
+
+// Shell with secrets in -c: do not audit args
+let exit = space
+    .spawn(
+        SpawnRequest::new("bash")
+            .args(["-lc", "curl -H \"Authorization: Bearer …\" …"])
+            .audit_args(false),
+    )
+    .await?
+    .wait_timeout(Duration::from_secs(120))
     .await?;
-let status = child.child.wait().await?;
+// exit.exit_code / exit.duration / exit.termination_reason
 
 if let Some(path) = space.events_path() {
     eprintln!("keel audit log: {}", path.display());
 }
 space.destroy().await?;
-# let _ = status;
+# let _ = exit;
 # Ok(())
 # }
 ```
+
+## Zene-oriented APIs (v0.0.9+)
+
+| Need | API |
+|------|-----|
+| MCP / stdio servers | `SpawnRequest::stdin/stdout/stderr(StdioMode::…)` + `ManagedProcess::take_stdin/out` |
+| No zombie shell grandchildren | `wait_timeout` / `cancel` (process group kill on Unix) |
+| Exit audit | `EventKind::ExecFinished` + `ProcessExit` |
+| Secret-safe exec logs | `.audit_args(false)` → `Exec { args_redacted: true, args: [] }` |
+| Read/Write/Edit tools | `space.fs().read/write/create/delete/rename/metadata` |
+
+`check_fs` remains a soft preflight for hosts that still do their own I/O; **SpaceFs** performs the I/O under policy and records `FsAccess`.
 
 ## Per-task child space
 
