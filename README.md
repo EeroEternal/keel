@@ -20,8 +20,8 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.10** — published on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).  
-Stdio modes + process-group lifecycle + `SpaceFs` + `audit_args` (host/MCP integration).  
+**v0.0.11** — published on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).  
+Zene fixes: nested `SpaceFs` paths, `wait_with_output_{timeout,cancel}`, process-group Drop.  
 See [CHANGELOG.md](CHANGELOG.md) and [integration guide](docs/integration.md).
 
 ## Install
@@ -39,11 +39,11 @@ Requires **Rust 1.93+**.
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.10"
+eero-keel-core = "0.0.11"
 # optional direct deps:
-# eero-keel-policy = "0.0.10"
-# eero-keel-enforce = "0.0.10"
-# eero-keel-record = "0.0.10"
+# eero-keel-policy = "0.0.11"
+# eero-keel-enforce = "0.0.11"
+# eero-keel-record = "0.0.11"
 ```
 
 Rust imports keep the short crate names (`keel_core`, `keel_policy`, …):

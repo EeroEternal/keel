@@ -5,6 +5,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.11] — 2026-07-19
+
+### Fixed
+
+- **`soft_fs_resolve` multi-level new paths** — writing `foo/bar.txt` when only the workspace exists now resolves to `workspace/foo/bar.txt` (keeps the full suffix after the nearest existing ancestor), not `workspace/bar.txt`.
+
+### Added
+
+- **`ManagedProcess` / `SpawnedProcess`**: `wait_with_output_timeout`, `wait_with_output_cancel(token, timeout)` for Zene-style `CancellationToken` + output collection.
+- **`SpawnedProcess` Drop** — if still running, kill the **process group** (Unix) so unexpected drop does not leave shell grandchildren (not only `Child::kill_on_drop`).
+- Re-export `CancellationToken` from `keel_core`.
+
+### Documentation
+
+- SpaceFs soft-boundary / **TOCTOU** guidance: hosts should keep `O_NOFOLLOW` and path re-checks.
+
+---
+
 ## [0.0.10] — 2026-07-19
 
 ### Changed

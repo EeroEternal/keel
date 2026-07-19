@@ -3,9 +3,20 @@
 //! Unlike [`crate::SpaceHandle::check_fs`], these methods **perform** the I/O when allowed,
 //! resolve paths (including symlink targets where possible), and emit `FsAccess` events.
 //!
-//! This is still a **soft** boundary for host-side tools: kernel isolation for child
-//! processes is separate. Hosts (e.g. Zene) should route Read/Write/Edit tools here
-//! instead of calling raw `std::fs` after a soft check.
+//! # Soft boundary and TOCTOU
+//!
+//! **SpaceFs is not a hard security boundary.** Authorization runs before I/O; another
+//! process (or a concurrent rename/symlink) can change the path between check and open
+//! (**TOCTOU**). Kernel isolation for *child* processes is separate (`local-process`).
+//!
+//! Hosts such as **Zene** should **keep** their own defenses when calling through SpaceFs
+//! or when retaining parallel I/O paths:
+//! - `O_NOFOLLOW` / no-follow symlink opens where applicable
+//! - re-check resolved paths after open (e.g. `fstat` / same-file checks)
+//! - do not delete existing path re-validation solely because SpaceFs exists
+//!
+//! Prefer SpaceFs over raw `std::fs` + `check_fs` for audit and policy alignment, but treat
+//! it as a cooperative control plane, not a sealed sandbox for the host process itself.
 
 use crate::error::{KeelError, KeelResult};
 use crate::space::SpaceHandle;

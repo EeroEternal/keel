@@ -10,7 +10,7 @@ members = [
 default-members = ["crates/keel-cli"]
 
 [workspace.package]
-version = "0.0.10"
+version = "0.0.11"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/EeroEternal/keel"
@@ -23,16 +23,17 @@ categories = ["command-line-utilities", "development-tools", "os"]
 [workspace.dependencies]
 # crates.io packages: eero-keel-* (owner EeroEternal). Plain keel-* and keel-exec-* are taken/other-owned.
 # Rust lib crate names stay keel_* via each crate's [lib] name.
-keel-policy = { package = "eero-keel-policy", path = "crates/keel-policy", version = "0.0.10" }
-keel-record = { package = "eero-keel-record", path = "crates/keel-record", version = "0.0.10" }
-keel-enforce = { package = "eero-keel-enforce", path = "crates/keel-enforce", version = "0.0.10" }
-keel-core = { package = "eero-keel-core", path = "crates/keel-core", version = "0.0.10" }
+keel-policy = { package = "eero-keel-policy", path = "crates/keel-policy", version = "0.0.11" }
+keel-record = { package = "eero-keel-record", path = "crates/keel-record", version = "0.0.11" }
+keel-enforce = { package = "eero-keel-enforce", path = "crates/keel-enforce", version = "0.0.11" }
+keel-core = { package = "eero-keel-core", path = "crates/keel-core", version = "0.0.11" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "fs", "process", "io-util"] }
+tokio-util = { version = "0.7", default-features = false, features = ["rt"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }

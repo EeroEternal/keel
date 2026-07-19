@@ -8,8 +8,12 @@ use std::process::Output;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
+use tokio_util::sync::CancellationToken;
 
 /// Process spawned under a space: stdio access + tree kill + audit on wait.
+///
+/// Dropping without wait/cancel kills the process group (via [`SpawnedProcess`]'s
+/// `Drop`), not only the direct child.
 pub struct ManagedProcess {
     pub(crate) inner: SpawnedProcess,
     pub(crate) space: Arc<Space>,
@@ -78,6 +82,36 @@ impl ManagedProcess {
         let program = self.program;
         let space = self.space;
         let (exit, output) = self.inner.wait_with_output().await?;
+        emit_finished(&space, &program, &exit).await?;
+        Ok((exit, output))
+    }
+
+    /// Collect stdout/stderr with a deadline; process-group kill on timeout.
+    pub async fn wait_with_output_timeout(
+        self,
+        timeout: Duration,
+    ) -> KeelResult<(ProcessExit, Output)> {
+        let program = self.program;
+        let space = self.space;
+        let (exit, output) = self.inner.wait_with_output_timeout(timeout).await?;
+        emit_finished(&space, &program, &exit).await?;
+        Ok((exit, output))
+    }
+
+    /// Collect stdout/stderr until exit, cancel, or timeout (for Zene `CancellationToken`).
+    ///
+    /// On cancel → `termination_reason = cancelled`; on timeout → `timed_out`.
+    pub async fn wait_with_output_cancel(
+        self,
+        token: &CancellationToken,
+        timeout: Duration,
+    ) -> KeelResult<(ProcessExit, Output)> {
+        let program = self.program;
+        let space = self.space;
+        let (exit, output) = self
+            .inner
+            .wait_with_output_cancel(token, timeout)
+            .await?;
         emit_finished(&space, &program, &exit).await?;
         Ok((exit, output))
     }

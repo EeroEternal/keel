@@ -39,10 +39,14 @@ pub fn resolve_against_workspace(policy: &Policy, path: &Path) -> PathBuf {
 
 /// Resolve a path for SpaceFs-style I/O: workspace-relative join, then
 /// canonicalize existing paths (follows symlinks). For new paths, canonicalize
-/// the nearest existing parent when possible.
+/// the nearest existing ancestor and rejoin the **full relative suffix** after it
+/// (so `foo/bar.txt` keeps both `foo/` and `bar.txt`, not only the leaf).
 ///
 /// Callers must still run [`soft_fs_allowed`] on the result (and ideally on the
 /// logical path) so symlink escape outside write roots is denied.
+///
+/// This is path math only — not a hard security boundary (TOCTOU still applies
+/// between resolve and I/O).
 pub fn soft_fs_resolve(policy: &Policy, path: &Path, _write: bool) -> Result<PathBuf, String> {
     let joined = resolve_against_workspace(policy, path);
     if joined.exists() {
@@ -51,14 +55,19 @@ pub fn soft_fs_resolve(policy: &Policy, path: &Path, _write: bool) -> Result<Pat
             .map_err(|e| format!("canonicalize {}: {e}", joined.display()));
     }
 
-    // New path: resolve parent chain.
-    let mut parent = joined.parent().map(Path::to_path_buf);
-    let file_name = joined
-        .file_name()
-        .ok_or_else(|| format!("invalid path: {}", joined.display()))?
-        .to_os_string();
+    // Walk up until an existing ancestor is found; collect the missing suffix
+    // (leaf-first), then rejoin in order after the ancestor.
+    // Example: /ws/foo/bar.txt where only /ws exists → suffix [bar.txt, foo]
+    // → /ws/foo/bar.txt (not /ws/bar.txt).
+    let mut ancestor = joined.parent().map(Path::to_path_buf);
+    let mut suffix_rev: Vec<std::ffi::OsString> = Vec::new();
+    if let Some(name) = joined.file_name() {
+        suffix_rev.push(name.to_os_string());
+    } else {
+        return Err(format!("invalid path: {}", joined.display()));
+    }
 
-    while let Some(ref p) = parent {
+    while let Some(ref p) = ancestor {
         if p.as_os_str().is_empty() {
             break;
         }
@@ -66,9 +75,16 @@ pub fn soft_fs_resolve(policy: &Policy, path: &Path, _write: bool) -> Result<Pat
             let canon = dunce::canonicalize(p)
                 .map(|x| normalize(&x))
                 .unwrap_or_else(|_| normalize(p));
-            return Ok(canon.join(file_name));
+            let mut out = canon;
+            for c in suffix_rev.iter().rev() {
+                out.push(c);
+            }
+            return Ok(out);
         }
-        parent = p.parent().map(Path::to_path_buf);
+        if let Some(name) = p.file_name() {
+            suffix_rev.push(name.to_os_string());
+        }
+        ancestor = p.parent().map(Path::to_path_buf);
     }
 
     Ok(joined)
@@ -286,5 +302,22 @@ mod tests {
         let p = profile_workspace(Path::new("/tmp/proj")).unwrap();
         assert!(soft_fs_allowed(&p, Path::new("README.md"), true));
         assert!(soft_fs_allowed(&p, Path::new("src/main.rs"), true));
+    }
+
+    #[test]
+    fn soft_fs_resolve_keeps_intermediate_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        let p = profile_workspace(ws).unwrap();
+        // Nested path does not exist yet — must keep `foo/` not only `bar.txt`.
+        // macOS may canonicalize /var → /private/var; compare relative to workspace.
+        let ws_canon = dunce::canonicalize(ws).unwrap_or_else(|_| ws.to_path_buf());
+        let resolved = soft_fs_resolve(&p, Path::new("foo/bar.txt"), true).unwrap();
+        let rel = resolved.strip_prefix(&ws_canon).unwrap_or(resolved.as_path());
+        assert_eq!(rel, Path::new("foo/bar.txt"), "resolved={resolved:?}");
+
+        let deeper = soft_fs_resolve(&p, Path::new("a/b/c.txt"), true).unwrap();
+        let rel2 = deeper.strip_prefix(&ws_canon).unwrap_or(deeper.as_path());
+        assert_eq!(rel2, Path::new("a/b/c.txt"), "deeper={deeper:?}");
     }
 }

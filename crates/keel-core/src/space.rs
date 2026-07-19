@@ -558,6 +558,106 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn wait_with_output_timeout_collects_and_kills() {
+        use keel_enforce::{SpawnRequest, TerminationReason};
+        use std::time::Duration;
+
+        let policy = profile_workspace(Path::new("/tmp")).unwrap();
+        let sink = Arc::new(MemorySink::new());
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create_with_sink(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+                ..Default::default()
+            },
+            Some(sink),
+        )
+        .await
+        .unwrap();
+
+        let req = SpawnRequest::new("sh").args(["-c", "echo hello-out; sleep 30"]);
+        let (exit, out) = space
+            .spawn(req)
+            .await
+            .unwrap()
+            .wait_with_output_timeout(Duration::from_millis(300))
+            .await
+            .unwrap();
+        assert_eq!(exit.termination_reason, TerminationReason::TimedOut);
+        assert!(String::from_utf8_lossy(&out.stdout).contains("hello-out"));
+        space.destroy().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn wait_with_output_cancel_token() {
+        use keel_enforce::{SpawnRequest, TerminationReason};
+        use std::time::Duration;
+        use tokio_util::sync::CancellationToken;
+
+        let policy = profile_workspace(Path::new("/tmp")).unwrap();
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create_with(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let token = CancellationToken::new();
+        let token2 = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            token2.cancel();
+        });
+
+        let req = SpawnRequest::new("sh").args(["-c", "sleep 30"]);
+        let (exit, _out) = space
+            .spawn(req)
+            .await
+            .unwrap()
+            .wait_with_output_cancel(&token, Duration::from_secs(10))
+            .await
+            .unwrap();
+        assert_eq!(exit.termination_reason, TerminationReason::Cancelled);
+        space.destroy().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn space_fs_nested_create_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        let policy = profile_workspace(ws).unwrap();
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create_with(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+
+        let nested = ws.join("foo").join("bar.txt");
+        space.fs().write("foo/bar.txt", b"nested-ok").await.unwrap();
+        assert_eq!(std::fs::read_to_string(&nested).unwrap(), "nested-ok");
+        space.destroy().await.unwrap();
+    }
+
+    #[tokio::test]
     async fn audit_args_false_redacts_exec_event() {
         use keel_enforce::SpawnRequest;
 

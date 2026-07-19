@@ -10,6 +10,8 @@ pub use error::{KeelError, KeelResult};
 pub use managed::ManagedProcess;
 pub use space::{Space, SpaceHandle, SpaceOptions, SpaceState};
 pub use space_fs::{SpaceFs, SpacePathMeta};
+/// Re-export for hosts (e.g. Zene) using [`ManagedProcess::wait_with_output_cancel`].
+pub use tokio_util::sync::CancellationToken;
 
 pub use keel_enforce::{
     local_process as backend_local_process, process_guard as backend_process_guard,

@@ -10,7 +10,7 @@ Library imports still use `keel_core` / `keel_policy` / etc.
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.10"
+eero-keel-core = "0.0.11"
 ```
 
 ```bash
@@ -85,17 +85,26 @@ space.destroy().await?;
 # }
 ```
 
-## Zene-oriented APIs (v0.0.10+)
+## Zene-oriented APIs (v0.0.11+)
 
 | Need | API |
 |------|-----|
 | MCP / stdio servers | `SpawnRequest::stdin/stdout/stderr(StdioMode::…)` + `ManagedProcess::take_stdin/out` |
-| No zombie shell grandchildren | `wait_timeout` / `cancel` (process group kill on Unix) |
+| Timeout + collect output | `wait_with_output_timeout(dur)` |
+| CancellationToken + timeout + output | `wait_with_output_cancel(&token, dur)` |
+| No zombie shell grandchildren | process-group kill on timeout/cancel/**Drop** (Unix) |
 | Exit audit | `EventKind::ExecFinished` + `ProcessExit` |
 | Secret-safe exec logs | `.audit_args(false)` → `Exec { args_redacted: true, args: [] }` |
 | Read/Write/Edit tools | `space.fs().read/write/create/delete/rename/metadata` |
 
-`check_fs` remains a soft preflight for hosts that still do their own I/O; **SpaceFs** performs the I/O under policy and records `FsAccess`.
+### SpaceFs soft boundary (keep host defenses)
+
+SpaceFs authorizes then performs I/O — there is a **TOCTOU** window. It is **not** a sealed
+sandbox for the host agent process. Zene should **retain** `O_NOFOLLOW`, post-open path
+re-checks, and similar controls; do not remove them solely because SpaceFs exists.
+
+`check_fs` remains a soft preflight for hosts that still do their own I/O; **SpaceFs**
+performs I/O under policy and records `FsAccess`.
 
 ## Per-task child space
 
