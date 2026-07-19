@@ -305,6 +305,23 @@ mod tests {
     }
 
     #[test]
+    fn baseline_denies_ssh_and_dotenv_even_with_default_read() {
+        let p = profile_workspace(Path::new("/tmp/keel-ws")).unwrap();
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("/tmp"));
+        assert!(
+            !soft_fs_allowed(&p, &home.join(".ssh").join("id_rsa"), false),
+            "baseline should deny ~/.ssh"
+        );
+        assert!(
+            !soft_fs_allowed(&p, Path::new("/tmp/keel-ws/.env"), false),
+            "baseline should deny **/.env"
+        );
+        assert!(soft_fs_allowed(&p, Path::new("/tmp/keel-ws/src/main.rs"), true));
+    }
+
+    #[test]
     fn soft_fs_resolve_keeps_intermediate_dirs() {
         let dir = tempfile::tempdir().unwrap();
         let ws = dir.path();

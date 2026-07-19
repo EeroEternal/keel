@@ -88,6 +88,14 @@ impl SpaceHandle {
         *self.inner.state.read().await
     }
 
+    /// Soft / **advisory** FS probe for UI hints and preflight messages.
+    ///
+    /// **Not a security boundary** when the host process is unconfined: a caller
+    /// that does `check_fs` then raw `tokio::fs::write` still runs I/O outside
+    /// Keel (TOCTOU + host bypass). Prefer [`Self::fs`] for tool Read/Write/Edit.
+    ///
+    /// For hard host isolation use [`Space::create_confined`] (Landlock/Seatbelt
+    /// on this process, irreversible).
     pub async fn check_fs(&self, path: &Path, write: bool) -> KeelResult<bool> {
         self.inner.ensure_open().await?;
         if self.inner.policy.is_expired(Utc::now()) {
@@ -102,20 +110,25 @@ impl SpaceHandle {
         self.inner
             .emit(EventKind::FsAccess {
                 path: path.to_path_buf(),
-                operation: op.into(),
+                operation: format!("check_{op}"),
                 allowed,
             })
             .await?;
         if !allowed && self.inner.opts.record_violations {
             self.inner
                 .emit(EventKind::Violation {
-                    operation: op.into(),
+                    operation: format!("check_{op}"),
                     target: path.display().to_string(),
-                    detail: Some("fs policy soft deny".into()),
+                    detail: Some("advisory soft deny (use SpaceFs for real I/O)".into()),
                 })
                 .await?;
         }
         Ok(allowed)
+    }
+
+    /// Alias for [`Self::check_fs`] — name stresses advisory-only use.
+    pub async fn check_fs_advisory(&self, path: &Path, write: bool) -> KeelResult<bool> {
+        self.check_fs(path, write).await
     }
 
     /// Check whether dialing `host:port` is allowed by the space network policy.
@@ -149,8 +162,11 @@ impl SpaceHandle {
         Ok(allowed)
     }
 
-    /// Policy-constrained FS API for host tools (Read/Write/Edit). Prefer this over raw
-    /// `std::fs` plus [`Self::check_fs`].
+    /// **Preferred** filesystem API for host tools (Read / Write / Edit / Delete).
+    ///
+    /// Performs I/O under policy with resolve + audit. Still a **soft** boundary on an
+    /// unconfined host — pair with [`Space::create_confined`] when the agent process
+    /// itself must be sandboxed. See [`SpaceFs`] docs for TOCTOU guidance.
     pub fn fs(&self) -> SpaceFs {
         SpaceFs::new(self.clone())
     }
@@ -248,11 +264,47 @@ impl SpaceHandle {
 
 impl Space {
     /// Create a space with default persistence (`~/.keel/spaces/<id>/events.jsonl`).
+    ///
+    /// Default backends (when you pass `LocalProcessBackend::default`) keep the **host
+    /// clean** and sandbox **children** only. For Grok-style whole-process confinement
+    /// use [`Self::create_confined`].
     pub async fn create(
         policy: Policy,
         backend: Arc<dyn EnforceBackend>,
     ) -> KeelResult<SpaceHandle> {
         Self::create_with(policy, backend, SpaceOptions::default()).await
+    }
+
+    /// Create a space and apply Landlock/Seatbelt to **this process** (irreversible).
+    ///
+    /// This is the Grok-style model: one policy per OS process; agent host tools and
+    /// accidental `std::fs` / sockets are constrained, not only `spawn` children.
+    ///
+    /// **Trade-offs**
+    /// - Cannot open a second space with a different kernel policy in this process.
+    /// - Requires unix + `local-process` kernel support (`require_kernel = true`).
+    /// - `NetworkPolicy::DenyAll` also blocks host process network via nono options.
+    ///
+    /// Prefer the default [`Self::create`] + child isolate when embedding multiple
+    /// concurrent spaces or when the host must keep unrestricted LLM/MCP sockets.
+    pub async fn create_confined(
+        policy: Policy,
+        opts: SpaceOptions,
+    ) -> KeelResult<SpaceHandle> {
+        use keel_enforce::{LocalProcessBackend, LocalProcessOptions};
+        use keel_policy::NetworkPolicy;
+
+        // Only DenyAll fully blocks host net. Allowlist still needs host→LLM and
+        // host→local proxy; children use ProxyOnly + CONNECT.
+        let block_process_network = matches!(policy.network, NetworkPolicy::DenyAll);
+
+        let backend = Arc::new(LocalProcessBackend::with_options(LocalProcessOptions {
+            isolate_apply: false,
+            require_kernel: true,
+            block_process_network,
+            ..LocalProcessOptions::default()
+        }));
+        Self::create_with(policy, backend, opts).await
     }
 
     /// Create with explicit options and optional pre-built sink override.

@@ -498,7 +498,7 @@ checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
 name = "eero-keel-cli"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "anyhow",
  "clap",
@@ -512,7 +512,7 @@ dependencies = [
 
 [[package]]
 name = "eero-keel-core"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -532,7 +532,7 @@ dependencies = [
 
 [[package]]
 name = "eero-keel-enforce"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -555,7 +555,7 @@ dependencies = [
 
 [[package]]
 name = "eero-keel-policy"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "chrono",
  "serde",
@@ -569,7 +569,7 @@ dependencies = [
 
 [[package]]
 name = "eero-keel-record"
-version = "0.0.11"
+version = "0.0.12"
 dependencies = [
  "async-trait",
  "chrono",

@@ -26,11 +26,13 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 |------------|----------------|
 | **Policy-bound commands** | `spawn` under a `Space`; configure stdin/stdout/stderr (including MCP stdio pipes). |
 | **Process-tree lifecycle** | Timeout / cancel kills the **process group** (Unix) so shell grandchildren are less likely to leak; collect exit code, duration, and termination reason. |
-| **Policy-bound file I/O** | `SpaceFs`: read / write / create / delete / rename / metadata with audit events. |
-| **Egress control** | Allowlists, local CONNECT proxy, and kernel ProxyOnly where supported. |
+| **Policy-bound file I/O** | **`space.fs()` (preferred)** — read / write / create / delete / rename / metadata + audit. `check_fs` is advisory UI only. |
+| **Baseline secret denies** | Every policy (unless opted out) denies `~/.ssh`, `~/.aws`, `**/.env`, `**/*.pem`, … even when `default_read` is true. |
+| **Egress control** | Allowlists, local CONNECT proxy, and kernel ProxyOnly on children (DenyAll → seccomp block). |
 | **Credentials** | JIT inject at spawn; redact exec args in audit logs when needed (`audit_args: false`). |
 | **Worktree isolation** | Optional git worktree or directory under `~/.keel/worktrees/`. |
 | **Task narrowing** | Child policies can only **shrink** parent reach — the model cannot expand its own rights. |
+| **Optional host confine** | `Space::create_confined` applies Landlock/Seatbelt to **this process** (irreversible; Grok-style). Default keeps the host clean and sandboxes children only. |
 
 ### Four pillars
 
@@ -49,9 +51,9 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.11** on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).
+**v0.0.12** on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).
 
-Includes stdio modes, process-group wait/cancel/Drop, nested `SpaceFs` paths, `wait_with_output_timeout` / `wait_with_output_cancel`, and `audit_args` redaction.
+Baseline credential denies, preferred `SpaceFs`, optional `create_confined`, process-group lifecycle, nested paths, cancel/timeout output waits.
 
 See [CHANGELOG.md](CHANGELOG.md), [design](docs/design.md), and [host integration](docs/integration.md).
 
@@ -70,7 +72,7 @@ keel info
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.11"
+eero-keel-core = "0.0.12"
 ```
 
 Rust imports use short crate names (`keel_core`, `keel_policy`, …), not the crates.io package prefix:

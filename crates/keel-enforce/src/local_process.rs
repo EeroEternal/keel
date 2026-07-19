@@ -41,6 +41,10 @@ pub struct LocalProcessOptions {
     pub block_process_network: bool,
     /// If true (default), apply kernel sandbox only in children, not the host.
     pub isolate_apply: bool,
+    /// On Linux, when deny paths/globs are present, use bubblewrap automatically
+    /// if available (default true). When denials exist, bwrap is missing, and
+    /// [`Self::require_kernel`] is true, apply fails closed.
+    pub auto_bwrap: bool,
 }
 
 impl Default for LocalProcessOptions {
@@ -49,6 +53,18 @@ impl Default for LocalProcessOptions {
             require_kernel: true,
             block_process_network: false,
             isolate_apply: true,
+            auto_bwrap: true,
+        }
+    }
+}
+
+impl LocalProcessOptions {
+    /// Host-applied kernel sandbox (irreversible). Same as `isolate_apply: false`.
+    pub fn confine_host() -> Self {
+        Self {
+            isolate_apply: false,
+            require_kernel: true,
+            ..Self::default()
         }
     }
 }
@@ -253,18 +269,38 @@ impl LocalProcessBackend {
             if let Ok(extra) = crate::deny_glob::expand_deny_globs(policy) {
                 denies.extend(extra);
             }
-            if !denies.is_empty() && !crate::bwrap::bwrap_available() {
-                let msg = "Linux read-deny requires bubblewrap (bwrap); install it or clear deny paths";
-                if self.opts.require_kernel {
-                    return Err(EnforceError::ApplyFailed(msg.into()));
+            if !denies.is_empty() {
+                if crate::bwrap::bwrap_available() && self.opts.auto_bwrap {
+                    info!(
+                        deny_count = denies.len(),
+                        "Linux bwrap auto-enabled for read-deny paths/globs"
+                    );
+                } else if !crate::bwrap::bwrap_available() {
+                    let msg = "Linux read-deny requires bubblewrap (bwrap) when deny paths/globs \
+                         are present (baseline credential denies included); install bwrap \
+                         or set require_kernel=false / clear denies";
+                    if self.opts.require_kernel {
+                        return Err(EnforceError::ApplyFailed(msg.into()));
+                    }
+                    warn!("{msg}");
                 }
-                warn!("{msg}");
             }
         }
 
-        // DenyAll → block child net at kernel/seccomp. Allowlist uses ProxyOnly instead.
+        // DenyAll → child net blocked via seccomp. Allowlist uses ProxyOnly + proxy env
+        // (direct connect bypass is blocked where ProxyOnly is applied in the child).
         if matches!(policy.network, NetworkPolicy::DenyAll) || self.opts.block_process_network {
             self.restrict_child_net.store(true, Ordering::Release);
+        }
+        if matches!(policy.network, NetworkPolicy::Allowlist(_)) {
+            // Ensure callers see enforcement model in the audit stream.
+            egress_note = if egress_note.is_empty() {
+                "allowlist: CONNECT proxy + child ProxyOnly (install proxy-aware tools)".into()
+            } else {
+                format!(
+                    "{egress_note}; allowlist enforces ProxyOnly on sandboxed children"
+                )
+            };
         }
         self.applied.store(true, Ordering::Release);
         info!(
@@ -548,6 +584,7 @@ mod tests {
             require_kernel: true,
             block_process_network: false,
             isolate_apply: false,
+            ..Default::default()
         });
         backend.apply(&policy, sink).await.unwrap();
         assert!(backend.is_applied());

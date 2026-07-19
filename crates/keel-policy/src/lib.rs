@@ -3,6 +3,7 @@
 //! Policy is bound before the agent runs and cannot be expanded by the agent.
 //! Enforce backends turn a [`Policy`] into real OS / workspace constraints.
 
+mod baseline;
 mod config;
 mod egress;
 mod error;
@@ -13,6 +14,9 @@ mod paths;
 mod policy;
 mod presets;
 
+pub use baseline::{
+    baseline_credential_path_denies, baseline_deny_rules, baseline_secret_glob_denies,
+};
 pub use config::{
     load_policy_from_sandbox_toml, resolve_policy_with_files, ProfileConfig, SandboxConfig,
     SandboxConfigFile,

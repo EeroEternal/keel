@@ -100,6 +100,9 @@ mod tests {
         let w = profile_workspace(ws).unwrap();
         assert!(w.default_read);
         assert!(matches!(w.network, NetworkPolicy::Unrestricted));
+        // Baseline always-deny even with default_read world.
+        assert!(w.deny_paths().any(|r| r.path.ends_with(".ssh")));
+        assert!(w.deny_paths().any(|r| r.glob && r.path.to_string_lossy().contains(".env")));
 
         let r = profile_read_only(ws).unwrap();
         assert!(matches!(r.network, NetworkPolicy::DenyAll));

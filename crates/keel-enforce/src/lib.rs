@@ -33,7 +33,9 @@ pub use backend::{
     BackendInfo, EnforceBackend, ProcessExit, SpawnRequest, SpawnedProcess, StdioMode,
     TerminationReason,
 };
-pub use compose::{local_process, process_guard, worktree_sandboxed, worktree_soft};
+pub use compose::{
+    local_process, local_process_confined, process_guard, worktree_sandboxed, worktree_soft,
+};
 pub use credentials::{
     grant_names, inject_into_env, resolve_credentials, revoke_resolved, CredentialSourceKind,
     ResolvedCredential,

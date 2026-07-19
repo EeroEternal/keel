@@ -26,6 +26,14 @@ pub fn local_process(opts: LocalProcessOptions) -> Arc<dyn EnforceBackend> {
     Arc::new(LocalProcessBackend::with_options(opts))
 }
 
+/// Local-process with **host** Landlock/Seatbelt (`isolate_apply = false`).
+/// Prefer [`keel_core::Space::create_confined`] for the full Space lifecycle.
+pub fn local_process_confined() -> Arc<dyn EnforceBackend> {
+    Arc::new(LocalProcessBackend::with_options(
+        LocalProcessOptions::confine_host(),
+    ))
+}
+
 /// Soft process-guard only.
 pub fn process_guard() -> Arc<dyn EnforceBackend> {
     Arc::new(ProcessGuardBackend::new())

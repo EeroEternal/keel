@@ -5,6 +5,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.12] — 2026-07-19
+
+### Added (Fable / hard-boundary track)
+
+- **Baseline always-deny** on every `PolicyBuilder::build()` (opt out: `without_baseline_denies`):
+  - Credential dirs: `~/.ssh`, `~/.gnupg`, `~/.aws`, `~/.azure`, `~/.kube`, `~/.docker`, cloud config paths, etc.
+  - Secret globs: `**/.env`, `**/*.pem`, `**/id_rsa`, …
+- **`Space::create_confined`** — apply Landlock/Seatbelt to **this process** (irreversible, Grok-style). Default remains child-only `isolate_apply`.
+- **`LocalProcessOptions::confine_host`**, `local_process_confined()` factory.
+- **`check_fs_advisory`** alias; `check_fs` docs mark it as UI/preflight only.
+- Linux **auto-bwrap** when deny paths/globs present (`auto_bwrap`, default true); fail closed if `require_kernel` and bwrap missing.
+- Allowlist audit notes: CONNECT proxy + child **ProxyOnly** (direct-connect bypass model documented).
+
+### Changed
+
+- Prefer **`space.fs()`** for tool I/O; `check_fs` emits `check_read` / `check_write` operations.
+- Built-in profiles inherit baseline denies (workspace is no longer “read the world including secrets”).
+
+### Not in this release (tracked)
+
+- Hash-chain audit, Windows Job/AppContainer, full netns, MSRV drop, seccomp “loopback-only connect” for allowlists beyond ProxyOnly.
+
+---
+
 ## [0.0.11] — 2026-07-19
 
 ### Fixed

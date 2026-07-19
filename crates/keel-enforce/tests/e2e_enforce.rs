@@ -107,6 +107,7 @@ async fn kernel_child_write_isolation() {
         require_kernel: true,
         isolate_apply: true,
         block_process_network: false,
+        ..Default::default()
     });
     let sink = Arc::new(MemorySink::new());
     backend.apply(&policy, sink.clone()).await.unwrap();

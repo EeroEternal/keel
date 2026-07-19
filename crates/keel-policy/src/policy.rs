@@ -142,6 +142,8 @@ pub struct PolicyBuilder {
     credentials: Vec<CredentialGrant>,
     expires_at: Option<DateTime<Utc>>,
     workspace: PathBuf,
+    /// When true (default), merge [`crate::baseline_deny_rules`] on build.
+    include_baseline_denies: bool,
 }
 
 impl PolicyBuilder {
@@ -157,7 +159,20 @@ impl PolicyBuilder {
             credentials: Vec::new(),
             expires_at: None,
             workspace: workspace.into(),
+            include_baseline_denies: true,
         }
+    }
+
+    /// Skip always-deny credential paths and secret globs (tests / break-glass only).
+    pub fn without_baseline_denies(mut self) -> Self {
+        self.include_baseline_denies = false;
+        self
+    }
+
+    /// Explicitly enable baseline denies (default).
+    pub fn with_baseline_denies(mut self) -> Self {
+        self.include_baseline_denies = true;
+        self
     }
 
     pub fn id(mut self, id: PolicyId) -> Self {
@@ -227,12 +242,19 @@ impl PolicyBuilder {
     }
 
     pub fn build(self) -> PolicyResult<Policy> {
+        let mut fs = self.fs;
+        if self.include_baseline_denies {
+            // Baseline first so soft/kernel deny evaluation sees secrets before broad allows.
+            let mut merged = crate::baseline::baseline_deny_rules();
+            merged.append(&mut fs);
+            fs = merged;
+        }
         let policy = Policy {
             id: self.id,
             task_id: self.task_id,
             label: self.label,
             default_read: self.default_read,
-            fs: self.fs,
+            fs,
             network: self.network,
             exec: self.exec,
             credentials: self.credentials,

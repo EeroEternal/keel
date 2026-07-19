@@ -10,7 +10,7 @@ Library imports still use `keel_core` / `keel_policy` / etc.
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.11"
+eero-keel-core = "0.0.12"
 ```
 
 ```bash
@@ -51,8 +51,9 @@ let space = Space::create_with(
 )
 .await?;
 
-// Host tools: prefer SpaceFs over raw std::fs + check_fs.
-// space.fs().write("src/main.rs", code).await?;
+// Host tools: ALWAYS use SpaceFs for Read/Write/Edit — not check_fs + raw tokio::fs.
+space.fs().write("src/main.rs", b"// code").await?;
+// check_fs is advisory only (UI hints).
 
 // MCP stdio: pipe stdin/stdout into the child
 // let mut mcp = space.spawn(
@@ -85,26 +86,38 @@ space.destroy().await?;
 # }
 ```
 
-## Zene-oriented APIs (v0.0.11+)
+## Threat levels (pick deliberately)
+
+| Level | Model | Use when |
+|-------|--------|----------|
+| **L0** | Soft policy + **`space.fs()`** | Cooperative host tools; not a hard boundary |
+| **L1** | Child kernel sandbox (`LocalProcess`, default `isolate_apply`) | Shell/tool subprocesses must not escape |
+| **L2** | **`Space::create_confined`** (host Landlock/Seatbelt) | Dedicated agent process; no second policy in-process |
+| **L3** | Worktree / netns / microVM (partial / future) | Stronger multi-tenant isolation |
+
+Default embed = **L1** (host stays clean). Call `Space::create_confined(policy, opts)` for **L2**.
+
+Baseline **always-deny** (`~/.ssh`, `**/.env`, …) applies to all builder-built policies unless
+`Policy::builder(ws).without_baseline_denies()`.
+
+## Zene-oriented APIs (v0.0.12+)
 
 | Need | API |
 |------|-----|
-| MCP / stdio servers | `SpawnRequest::stdin/stdout/stderr(StdioMode::…)` + `ManagedProcess::take_stdin/out` |
+| File tools (required path) | **`space.fs().read/write/create/delete/rename/metadata`** |
+| UI “would this path be allowed?” | `check_fs` / `check_fs_advisory` only — **do not** pair with raw `tokio::fs` |
+| MCP / stdio servers | `SpawnRequest::stdin/stdout/stderr(StdioMode::…)` + `take_stdin/out` |
 | Timeout + collect output | `wait_with_output_timeout(dur)` |
 | CancellationToken + timeout + output | `wait_with_output_cancel(&token, dur)` |
-| No zombie shell grandchildren | process-group kill on timeout/cancel/**Drop** (Unix) |
-| Exit audit | `EventKind::ExecFinished` + `ProcessExit` |
-| Secret-safe exec logs | `.audit_args(false)` → `Exec { args_redacted: true, args: [] }` |
-| Read/Write/Edit tools | `space.fs().read/write/create/delete/rename/metadata` |
+| Process-group cleanup | timeout / cancel / **Drop** (Unix) |
+| Whole-process sandbox | `Space::create_confined` |
+| Secret-safe exec logs | `.audit_args(false)` |
 
 ### SpaceFs soft boundary (keep host defenses)
 
-SpaceFs authorizes then performs I/O — there is a **TOCTOU** window. It is **not** a sealed
-sandbox for the host agent process. Zene should **retain** `O_NOFOLLOW`, post-open path
-re-checks, and similar controls; do not remove them solely because SpaceFs exists.
-
-`check_fs` remains a soft preflight for hosts that still do their own I/O; **SpaceFs**
-performs I/O under policy and records `FsAccess`.
+SpaceFs authorizes then performs I/O — there is a **TOCTOU** window on an unconfined host.
+It is **not** a sealed sandbox for the agent process. **Retain** `O_NOFOLLOW`, post-open path
+re-checks, and similar controls. For host-level enforcement use **L2** `create_confined`.
 
 ## Per-task child space
 

@@ -8,23 +8,25 @@
 
 ---
 
-## Current baseline (v0.0.5)
+## Current baseline (v0.0.12)
 
 | Area | Status |
 |------|--------|
-| Policy + presets | Done |
+| Policy + presets + **baseline always-deny** | Done |
 | `process-guard` / `local-process` / `local-worktree` | Done |
-| Isolate child apply | Done |
-| Linux bwrap read-deny (exact paths) | Done |
-| Egress allowlist + CONNECT proxy + ProxyOnly | Done |
+| Isolate child apply (default) + **`create_confined`** | Done |
+| Linux bwrap read-deny (auto when denies present) | Done |
+| Egress allowlist + CONNECT proxy + ProxyOnly | Done (seccomp loopback-only still open) |
 | JIT credentials (env/file) | Done |
 | Per-task `narrow_policy` / `open_task` | Done |
 | Space event JSONL | Done |
-| Deny **glob** kernel path | Partial (policy only) |
-| Worktree **+** kernel composed by default | Partial (API exists, CLI weak) |
+| **SpaceFs preferred**; `check_fs` advisory | Done (docs + API) |
+| Deny **glob** soft + kernel map | Partial → improved with baseline globs |
+| Worktree **+** kernel composed | Done (API + CLI `--sandbox`) |
 | Real kernel e2e | Thin |
-| `sandbox.toml`-style config | Missing |
-| Host integration guide | Missing |
+| `sandbox.toml` | Done |
+| Host integration guide | Done |
+| Hash-chain audit / Windows Job / netns | Not started |
 
 ---
 
