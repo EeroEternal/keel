@@ -1,52 +1,79 @@
 # Keel
 
-**The execution layer under agents.**
+**The execution layer under AI agents.**
 
-Agents decide *what* to do at runtime. Keel governs *what is allowed to become real* — filesystem, network, credentials, and process execution — without trusting the agent’s own account of its intent.
+Agents decide *what* to do. Keel decides *what is allowed to become real* — filesystem access, subprocesses, network egress, and credentials — without trusting the model’s story about what it “needs.”
 
 ```text
 ┌─────────────────────────────┐
-│  Agent runtime              │  Grok · Codex · custom ACP hosts
+│  Agent runtime              │  Grok · Codex · Zene · custom hosts
 │  (plans, tools, prompts)    │
 └──────────────┬──────────────┘
-               │ spawn(policy) / enforce / events
+               │ policy · spawn · SpaceFs · events
 ┌──────────────▼──────────────┐
 │  Keel                       │  Policy · Enforce · Record · Lifecycle
 │  Secure execution space     │
 └─────────────────────────────┘
 ```
 
-Named after a ship’s **keel**: the structural spine underneath. The agent rides on top; the keel keeps real access from tearing the host (or the user) apart.
+Named after a ship’s **keel**: the structural spine underneath. The agent rides on top; Keel keeps real host access from tearing things apart.
+
+> **One line:** Keel is the landing gate under the agent — bind reach first, execute under policy, audit what actually happened.
+
+## What Keel does
+
+| Capability | What you get |
+|------------|----------------|
+| **Policy-bound commands** | `spawn` under a `Space`; configure stdin/stdout/stderr (including MCP stdio pipes). |
+| **Process-tree lifecycle** | Timeout / cancel kills the **process group** (Unix) so shell grandchildren are less likely to leak; collect exit code, duration, and termination reason. |
+| **Policy-bound file I/O** | `SpaceFs`: read / write / create / delete / rename / metadata with audit events. |
+| **Egress control** | Allowlists, local CONNECT proxy, and kernel ProxyOnly where supported. |
+| **Credentials** | JIT inject at spawn; redact exec args in audit logs when needed (`audit_args: false`). |
+| **Worktree isolation** | Optional git worktree or directory under `~/.keel/worktrees/`. |
+| **Task narrowing** | Child policies can only **shrink** parent reach — the model cannot expand its own rights. |
+
+### Four pillars
+
+| Pillar | Plain language |
+|--------|----------------|
+| **Policy** | Up front: what may be read, written, executed, dialed, and which credentials exist (plus TTL). |
+| **Enforce** | At runtime: soft checks and/or kernel sandboxes (Landlock / Seatbelt) map policy to boundaries. |
+| **Record** | Ground truth: events tagged with `space_id` / `policy_id` (optional `events.jsonl` under `~/.keel`). |
+| **Lifecycle** | A **Space**: create → use → destroy. |
+
+### What Keel is *not*
+
+- Not a chat UI or planning framework (not a replacement for Grok / Codex / your agent host).
+- Not a full desktop app.
+- Soft checks alone are **not** VM-grade isolation — use kernel backends when you need stronger FS/net enforcement. `SpaceFs` is a **soft** host-side API (TOCTOU still exists); hosts should keep `O_NOFOLLOW` and path re-checks where they already have them.
 
 ## Status
 
-**v0.0.11** — published on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).  
-Zene fixes: nested `SpaceFs` paths, `wait_with_output_{timeout,cancel}`, process-group Drop.  
-See [CHANGELOG.md](CHANGELOG.md) and [integration guide](docs/integration.md).
+**v0.0.11** on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).
+
+Includes stdio modes, process-group wait/cancel/Drop, nested `SpaceFs` paths, `wait_with_output_timeout` / `wait_with_output_cancel`, and `audit_args` redaction.
+
+See [CHANGELOG.md](CHANGELOG.md), [design](docs/design.md), and [host integration](docs/integration.md).
 
 ## Install
 
-### CLI binary
+Requires **Rust 1.93+**.
+
+### CLI
 
 ```bash
 cargo install eero-keel-cli
 keel info
 ```
 
-Requires **Rust 1.93+**.
-
-### Library (Cargo.toml)
+### Library
 
 ```toml
 [dependencies]
 eero-keel-core = "0.0.11"
-# optional direct deps:
-# eero-keel-policy = "0.0.11"
-# eero-keel-enforce = "0.0.11"
-# eero-keel-record = "0.0.11"
 ```
 
-Rust imports keep the short crate names (`keel_core`, `keel_policy`, …):
+Rust imports use short crate names (`keel_core`, `keel_policy`, …), not the crates.io package prefix:
 
 ```rust
 use keel_core::{
@@ -54,48 +81,42 @@ use keel_core::{
 };
 ```
 
-### crates.io naming
-
-- Plain `keel` / `keel-core` / `keel-cli` / `keel-enforce` are taken by unrelated projects.
-- Historical `keel-exec-*` (0.0.8) was published under another crates.io account and is **not** used going forward.
-- This repository publishes as **`eero-keel-*`** under **EeroEternal**:
+### crates.io package names
 
 | crates.io package | Rust lib / binary | Role |
 |-------------------|-------------------|------|
 | [`eero-keel-policy`](https://crates.io/crates/eero-keel-policy) | `keel_policy` | Policy, presets, IDs, serde |
 | [`eero-keel-record`](https://crates.io/crates/eero-keel-record) | `keel_record` | Events + sinks (memory, JSONL) |
-| [`eero-keel-enforce`](https://crates.io/crates/eero-keel-enforce) | `keel_enforce` | `EnforceBackend` + null / process-guard / kernel |
-| [`eero-keel-core`](https://crates.io/crates/eero-keel-core) | `keel_core` | `Space` lifecycle orchestration |
+| [`eero-keel-enforce`](https://crates.io/crates/eero-keel-enforce) | `keel_enforce` | Backends (null, process-guard, kernel, worktree) |
+| [`eero-keel-core`](https://crates.io/crates/eero-keel-core) | `keel_core` | `Space` orchestration |
 | [`eero-keel-cli`](https://crates.io/crates/eero-keel-cli) | binary `keel` | CLI |
 
-Repo paths remain `crates/keel-*` for local development.
+Notes:
 
-## Quick start (from source)
+- Plain names `keel` / `keel-core` / `keel-cli` / `keel-enforce` are taken by unrelated crates.
+- Historical `keel-exec-*` is **not** maintained from this repo.
+- Source directories remain `crates/keel-*`; use package names with `cargo -p eero-keel-cli`.
+
+## Quick start
+
+### From source
 
 ```bash
-# Requires Rust 1.93+
 cargo build -p eero-keel-cli --release
 ./target/release/keel info
 
-# Print a workspace policy as JSON
 cargo run -p eero-keel-cli -- policy --profile workspace
-
-# Soft-check a path
 cargo run -p eero-keel-cli -- check --profile workspace --write ./README.md
-
-# Run a command inside a temporary space
 cargo run -p eero-keel-cli -- run --profile workspace -- echo hello
-cargo run -p eero-keel-cli -- run --trace --profile read-only -- /bin/ls /
 ```
 
-### Library example
+### Library sketch
 
 ```rust
 use std::sync::Arc;
 use std::time::Duration;
 use keel_core::{
     profile_workspace, MemorySink, ProcessGuardBackend, Space, SpaceOptions, SpawnRequest,
-    StdioMode,
 };
 
 # async fn demo() -> anyhow::Result<()> {
@@ -114,8 +135,8 @@ let space = Space::create_with_sink(
 )
 .await?;
 
-// Tool FS under policy (not just a soft check):
-// space.fs().write("out.txt", b"ok").await?;
+// Files under policy (prefer SpaceFs over raw std::fs + check_fs alone):
+// space.fs().write("foo/bar.txt", b"ok").await?;
 
 let exit = space
     .spawn(SpawnRequest::new("echo").args(["keel"]))
@@ -123,6 +144,9 @@ let exit = space
     .wait_timeout(Duration::from_secs(5))
     .await?;
 assert!(exit.success());
+
+// Timeout + collect stdout/stderr:
+// .wait_with_output_timeout(Duration::from_secs(30)).await?;
 
 // MCP-style stdio:
 // SpawnRequest::new("server").stdin(StdioMode::Piped).stdout(StdioMode::Piped)
@@ -132,43 +156,41 @@ space.destroy().await?;
 # }
 ```
 
-Design notes: [`docs/design.md`](docs/design.md). Host integration: [`docs/integration.md`](docs/integration.md).
+Typical host flow:
 
-## Pillars
-
-| Pillar | Role |
-|--------|------|
-| **Policy** | Task/session reach: FS, net, exec, credentials, TTL. Model cannot expand policy. |
-| **Enforce** | Backends map policy to soft checks today; kernel/VM backends next. |
-| **Record** | What actually happened, bound to `space_id` / `policy_id`. |
-| **Lifecycle** | Create → use → revoke → destroy. |
+```text
+open Space (bind policy)
+  → space.fs() for file tools  /  space.spawn() for commands
+  → wait with timeout or CancellationToken
+  → destroy  →  keep audit log if needed
+```
 
 ## Backends
 
 | Backend | Isolation | Status |
 |---------|-----------|--------|
-| `null` | Record + accept policy | done |
-| `process-guard` | Soft FS/exec checks | done |
-| `local-process` | Landlock (Linux) / Seatbelt (macOS) via nono | done |
+| `null` | Record only; accept policy | done |
+| `process-guard` | Soft FS / exec checks | done |
+| `local-process` | Landlock (Linux) / Seatbelt (macOS) via nono; children sandboxed by default | done |
 | `local-worktree` | Git worktree or directory under `~/.keel/worktrees/` | done |
-| `remote-microvm` | Guest microVM (stronger isolation) | future — [docs](docs/future-remote-microvm.md) |
+| `remote-microvm` | Guest microVM | future — [docs](docs/future-remote-microvm.md) |
 
 ```bash
-# Kernel FS on children only (host stays clean); events under ~/.keel/spaces/
+# Kernel FS on children; events under ~/.keel/spaces/
 cargo run -p eero-keel-cli -- run --backend local-process --profile workspace -- echo hello
 
-# Egress allowlist: only listed hosts (via local CONNECT proxy + ProxyOnly)
+# Egress allowlist (CONNECT proxy + ProxyOnly where supported)
 cargo run -p eero-keel-cli -- check-egress evil.com --allow-host api.x.ai:443
 cargo run -p eero-keel-cli -- run --backend local-process --allow-host example.com:80 -- \
   curl -sI http://example.com/
 
-# Worktree isolation + credential injection
+# Worktree + credential injection
 cargo run -p eero-keel-cli -- run --worktree --cred API_TOKEN=env:MY_TOKEN -- echo ok
-
-# Linux: FS deny paths need bubblewrap for true read-deny
 ```
 
-## Profiles
+On Linux, true read-deny for nested paths often needs **bubblewrap** (`bwrap` on `PATH` or `KEEL_BWRAP`).
+
+## Policy profiles
 
 | Profile | Read | Write | Network (policy intent) |
 |---------|------|-------|-------------------------|
@@ -176,16 +198,12 @@ cargo run -p eero-keel-cli -- run --worktree --cred API_TOKEN=env:MY_TOKEN -- ec
 | `read-only` | world | `~/.keel` + temps | deny-all |
 | `strict` | system + workspace | workspace + `~/.keel` + temps | deny-all |
 
-## Non-goals (v0)
-
-- Replacing agent frameworks or model providers  
-- Chat UI  
-- Claiming Firecracker-level isolation before a real backend exists  
+Custom profiles: builder API, JSON/TOML, or `sandbox.toml` (`~/.keel/sandbox.toml` and project `.keel/sandbox.toml`).
 
 ## Links
 
 - Repository: [github.com/EeroEternal/keel](https://github.com/EeroEternal/keel)
-- Docs: [design](docs/design.md) · [integration](docs/integration.md) · [testing](docs/testing.md) · [changelog](CHANGELOG.md)
+- [Design](docs/design.md) · [Integration](docs/integration.md) · [Testing](docs/testing.md) · [Changelog](CHANGELOG.md)
 
 ## License
 
