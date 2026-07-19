@@ -34,10 +34,10 @@ Keel is the **execution layer under AI agents**: Policy · Enforce · Record · 
 
 ## Packaging
 
-- **crates.io package names** are `keel-exec-policy`, `keel-exec-record`, `keel-exec-enforce`, `keel-exec-core`, `keel-exec-cli`.
-- Plain `keel` / `keel-core` / `keel-cli` / `keel-enforce` are taken by unrelated projects — do not rename back without checking crates.io.
+- **crates.io package names** are `eero-keel-policy`, `eero-keel-record`, `eero-keel-enforce`, `eero-keel-core`, `eero-keel-cli` (owner **EeroEternal**).
+- Do not publish as `keel-exec-*` (owned by another account) or plain `keel` / `keel-core` / `keel-cli` / `keel-enforce` (taken).
 - Rust **lib names** stay `keel_policy`, `keel_record`, `keel_enforce`, `keel_core` via `[lib] name = "…"`.
-- Local directories remain `crates/keel-*`. Use `cargo build -p keel-exec-cli` (package name, not directory).
+- Local directories remain `crates/keel-*`. Use `cargo build -p eero-keel-cli` (package name, not directory).
 
 ## Engineering conventions
 

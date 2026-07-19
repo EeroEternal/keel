@@ -497,6 +497,90 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d0881ea181b1df73ff77ffaaf9c7544ecc11e82fba9b5f27b262a3c73a332555"
 
 [[package]]
+name = "eero-keel-cli"
+version = "0.0.10"
+dependencies = [
+ "anyhow",
+ "clap",
+ "eero-keel-core",
+ "eero-keel-policy",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "eero-keel-core"
+version = "0.0.10"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "eero-keel-enforce",
+ "eero-keel-policy",
+ "eero-keel-record",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "eero-keel-enforce"
+version = "0.0.10"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "dirs",
+ "dunce",
+ "eero-keel-policy",
+ "eero-keel-record",
+ "globset",
+ "ignore",
+ "libc",
+ "nono",
+ "serde",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "eero-keel-policy"
+version = "0.0.10"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "toml",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "eero-keel-record"
+version = "0.0.10"
+dependencies = [
+ "async-trait",
+ "chrono",
+ "dirs",
+ "eero-keel-policy",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "enumflags2"
 version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -960,90 +1044,6 @@ dependencies = [
  "cfg-if",
  "futures-util",
  "wasm-bindgen",
-]
-
-[[package]]
-name = "keel-exec-cli"
-version = "0.0.9"
-dependencies = [
- "anyhow",
- "clap",
- "keel-exec-core",
- "keel-exec-policy",
- "serde_json",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "keel-exec-core"
-version = "0.0.9"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "keel-exec-enforce",
- "keel-exec-policy",
- "keel-exec-record",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "keel-exec-enforce"
-version = "0.0.9"
-dependencies = [
- "anyhow",
- "async-trait",
- "chrono",
- "dirs",
- "dunce",
- "globset",
- "ignore",
- "keel-exec-policy",
- "keel-exec-record",
- "libc",
- "nono",
- "serde",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
-]
-
-[[package]]
-name = "keel-exec-policy"
-version = "0.0.9"
-dependencies = [
- "chrono",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror",
- "toml",
- "tracing",
- "uuid",
-]
-
-[[package]]
-name = "keel-exec-record"
-version = "0.0.9"
-dependencies = [
- "async-trait",
- "chrono",
- "dirs",
- "keel-exec-policy",
- "serde",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing",
 ]
 
 [[package]]

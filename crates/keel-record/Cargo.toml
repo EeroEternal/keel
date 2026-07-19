@@ -1,5 +1,5 @@
 [package]
-name = "keel-exec-record"
+name = "eero-keel-record"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "../../README.md"
 description = "Execution record — what actually happened inside a Keel space"
 rust-version.workspace = true
-documentation = "https://docs.rs/keel-exec-record"
+documentation = "https://docs.rs/eero-keel-record"
 
 [lib]
 name = "keel_record"

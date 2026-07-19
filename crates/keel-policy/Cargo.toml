@@ -1,5 +1,5 @@
 [package]
-name = "keel-exec-policy"
+name = "eero-keel-policy"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "../../README.md"
 description = "Execution policy types for Keel — reach, network, credentials, TTL"
 rust-version.workspace = true
-documentation = "https://docs.rs/keel-exec-policy"
+documentation = "https://docs.rs/eero-keel-policy"
 
 [lib]
 name = "keel_policy"

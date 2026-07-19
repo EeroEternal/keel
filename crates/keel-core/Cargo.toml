@@ -1,5 +1,5 @@
 [package]
-name = "keel-exec-core"
+name = "eero-keel-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -11,7 +11,7 @@ categories.workspace = true
 readme = "../../README.md"
 description = "Keel space lifecycle — Policy + Enforce + Record orchestration"
 rust-version.workspace = true
-documentation = "https://docs.rs/keel-exec-core"
+documentation = "https://docs.rs/eero-keel-core"
 
 [lib]
 name = "keel_core"

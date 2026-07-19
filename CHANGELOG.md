@@ -5,21 +5,36 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.10] — 2026-07-19
+
+### Changed
+
+- **crates.io packages renamed to `eero-keel-*`**, published as crates.io user **[EeroEternal](https://crates.io/users/EeroEternal)** (Eero).
+  - `eero-keel-policy`, `eero-keel-record`, `eero-keel-enforce`, `eero-keel-core`, `eero-keel-cli`
+  - Install: `cargo install eero-keel-cli` / `eero-keel-core = "0.0.10"`.
+- **Why not `keel-exec-*`?** Version 0.0.8 was published under account **lipish**. Only that owner can push further versions of those names. This project standardizes on **Eero / EeroEternal**.
+- Legacy `keel-exec-*` crates on crates.io are **not** maintained from this repository.
+- Rust lib names unchanged (`keel_core`, …); binary still `keel`.
+
+### Includes (from 0.0.9 code line)
+
+- Stdio modes, process-group lifecycle, `ManagedProcess`, `SpaceFs`, `audit_args` / `ExecFinished` (Zene host APIs).
+
+---
+
 ## [0.0.9] — 2026-07-19
 
 ### Added (Zene / host integration)
 
-- **`StdioMode`** on `SpawnRequest` — `null` / `inherit` / `piped` for stdin, stdout, stderr (defaults: null / piped / piped). MCP stdio can use `.stdin(StdioMode::Piped)`.
-- **Process-tree lifecycle** — Unix children default to their own process group; `ManagedProcess::wait_timeout` / `cancel` kill the group (not only the shell), then wait.
-- **`ProcessExit`** — `exit_code`, `duration`, `termination_reason` (`exited` | `timed_out` | `cancelled` | `killed` | `signal` | `unknown`), optional `signal`.
-- **`EventKind::ExecFinished`** audit event after managed wait.
-- **`audit_args: false`** on `SpawnRequest` — Exec events omit args (`args_redacted: true`) so `bash -lc` secrets are not written to `events.jsonl`.
-- **`SpaceFs`** (`space.fs()`) — policy-constrained `read` / `write` / `create` / `delete` / `rename` / `metadata` with path resolve (symlink-aware best-effort) + `FsAccess` audit. Soft boundary for host tools; not a replacement for kernel child sandboxes.
+- **`StdioMode`** on `SpawnRequest` — `null` / `inherit` / `piped` for stdin, stdout, stderr.
+- **Process-tree lifecycle** — process group kill on timeout/cancel; `ProcessExit` + `ExecFinished`.
+- **`audit_args: false`** — redact Exec args in audit log.
+- **`SpaceFs`** — policy-constrained host FS I/O + audit.
+- `SpaceHandle::spawn` → **`ManagedProcess`**.
 
-### Changed
+### Note
 
-- `SpaceHandle::spawn` returns **`ManagedProcess`** (stdio take + tree wait) instead of bare `SpawnedProcess`. Use `.into_spawned()` for the low-level handle.
-- `Exec` events gain `args_redacted` (default false for older logs).
+- GitHub tag `v0.0.9` exists; crates.io publish under `keel-exec-*` was blocked (owner mismatch). Superseded by **0.0.10** (`eero-keel-*`).
 
 ---
 
@@ -27,18 +42,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ### Changed
 
-- **First crates.io publish** under the **`keel-exec-*`** package names:
-  - `keel-exec-policy`, `keel-exec-record`, `keel-exec-enforce`, `keel-exec-core`, `keel-exec-cli`
-  - Plain `keel` / `keel-core` / `keel-cli` / `keel-enforce` are taken by unrelated crates on crates.io.
-  - Rust **library crate names** remain `keel_policy`, `keel_record`, `keel_enforce`, `keel_core` (no import breakage).
-  - CLI binary remains `keel` (`cargo install keel-exec-cli`).
-- Workspace deps use `package = "keel-exec-…"` + version for path/publish dual use.
-- README, Makefile, testing docs: `-p keel-exec-cli` / install instructions / naming table.
-
-### Documentation
-
-- Document crates.io naming collision and install paths.
-- Link package table and `docs.rs` targets from README.
+- **First crates.io publish** under the **`keel-exec-*`** package names (account **lipish** — historical).
+  - Rust **library crate names** remain `keel_policy`, `keel_record`, `keel_enforce`, `keel_core`.
+  - CLI binary remains `keel`.
+- Documented crates.io naming collision with plain `keel` / `keel-core` / etc.
 
 ---
 

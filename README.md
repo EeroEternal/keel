@@ -20,7 +20,7 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.9** — published on [crates.io](https://crates.io) under the **`keel-exec-*`** package names (see below).  
+**v0.0.10** — published on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).  
 Stdio modes + process-group lifecycle + `SpaceFs` + `audit_args` (host/MCP integration).  
 See [CHANGELOG.md](CHANGELOG.md) and [integration guide](docs/integration.md).
 
@@ -29,7 +29,7 @@ See [CHANGELOG.md](CHANGELOG.md) and [integration guide](docs/integration.md).
 ### CLI binary
 
 ```bash
-cargo install keel-exec-cli
+cargo install eero-keel-cli
 keel info
 ```
 
@@ -39,11 +39,11 @@ Requires **Rust 1.93+**.
 
 ```toml
 [dependencies]
-keel-exec-core = "0.0.9"
+eero-keel-core = "0.0.10"
 # optional direct deps:
-# keel-exec-policy = "0.0.9"
-# keel-exec-enforce = "0.0.9"
-# keel-exec-record = "0.0.9"
+# eero-keel-policy = "0.0.10"
+# eero-keel-enforce = "0.0.10"
+# eero-keel-record = "0.0.10"
 ```
 
 Rust imports keep the short crate names (`keel_core`, `keel_policy`, …):
@@ -56,15 +56,17 @@ use keel_core::{
 
 ### crates.io naming
 
-The plain names `keel`, `keel-core`, `keel-cli`, and `keel-enforce` are **already taken** by unrelated projects on crates.io. This repository therefore publishes as:
+- Plain `keel` / `keel-core` / `keel-cli` / `keel-enforce` are taken by unrelated projects.
+- Historical `keel-exec-*` (0.0.8) was published under another crates.io account and is **not** used going forward.
+- This repository publishes as **`eero-keel-*`** under **EeroEternal**:
 
 | crates.io package | Rust lib / binary | Role |
 |-------------------|-------------------|------|
-| [`keel-exec-policy`](https://crates.io/crates/keel-exec-policy) | `keel_policy` | Policy, presets, IDs, serde |
-| [`keel-exec-record`](https://crates.io/crates/keel-exec-record) | `keel_record` | Events + sinks (memory, JSONL) |
-| [`keel-exec-enforce`](https://crates.io/crates/keel-exec-enforce) | `keel_enforce` | `EnforceBackend` + null / process-guard / kernel |
-| [`keel-exec-core`](https://crates.io/crates/keel-exec-core) | `keel_core` | `Space` lifecycle orchestration |
-| [`keel-exec-cli`](https://crates.io/crates/keel-exec-cli) | binary `keel` | CLI |
+| [`eero-keel-policy`](https://crates.io/crates/eero-keel-policy) | `keel_policy` | Policy, presets, IDs, serde |
+| [`eero-keel-record`](https://crates.io/crates/eero-keel-record) | `keel_record` | Events + sinks (memory, JSONL) |
+| [`eero-keel-enforce`](https://crates.io/crates/eero-keel-enforce) | `keel_enforce` | `EnforceBackend` + null / process-guard / kernel |
+| [`eero-keel-core`](https://crates.io/crates/eero-keel-core) | `keel_core` | `Space` lifecycle orchestration |
+| [`eero-keel-cli`](https://crates.io/crates/eero-keel-cli) | binary `keel` | CLI |
 
 Repo paths remain `crates/keel-*` for local development.
 
@@ -72,18 +74,18 @@ Repo paths remain `crates/keel-*` for local development.
 
 ```bash
 # Requires Rust 1.93+
-cargo build -p keel-exec-cli --release
+cargo build -p eero-keel-cli --release
 ./target/release/keel info
 
 # Print a workspace policy as JSON
-cargo run -p keel-exec-cli -- policy --profile workspace
+cargo run -p eero-keel-cli -- policy --profile workspace
 
 # Soft-check a path
-cargo run -p keel-exec-cli -- check --profile workspace --write ./README.md
+cargo run -p eero-keel-cli -- check --profile workspace --write ./README.md
 
 # Run a command inside a temporary space
-cargo run -p keel-exec-cli -- run --profile workspace -- echo hello
-cargo run -p keel-exec-cli -- run --trace --profile read-only -- /bin/ls /
+cargo run -p eero-keel-cli -- run --profile workspace -- echo hello
+cargo run -p eero-keel-cli -- run --trace --profile read-only -- /bin/ls /
 ```
 
 ### Library example
@@ -153,15 +155,15 @@ Design notes: [`docs/design.md`](docs/design.md). Host integration: [`docs/integ
 
 ```bash
 # Kernel FS on children only (host stays clean); events under ~/.keel/spaces/
-cargo run -p keel-exec-cli -- run --backend local-process --profile workspace -- echo hello
+cargo run -p eero-keel-cli -- run --backend local-process --profile workspace -- echo hello
 
 # Egress allowlist: only listed hosts (via local CONNECT proxy + ProxyOnly)
-cargo run -p keel-exec-cli -- check-egress evil.com --allow-host api.x.ai:443
-cargo run -p keel-exec-cli -- run --backend local-process --allow-host example.com:80 -- \
+cargo run -p eero-keel-cli -- check-egress evil.com --allow-host api.x.ai:443
+cargo run -p eero-keel-cli -- run --backend local-process --allow-host example.com:80 -- \
   curl -sI http://example.com/
 
 # Worktree isolation + credential injection
-cargo run -p keel-exec-cli -- run --worktree --cred API_TOKEN=env:MY_TOKEN -- echo ok
+cargo run -p eero-keel-cli -- run --worktree --cred API_TOKEN=env:MY_TOKEN -- echo ok
 
 # Linux: FS deny paths need bubblewrap for true read-deny
 ```

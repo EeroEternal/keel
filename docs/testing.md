@@ -19,23 +19,23 @@ Does **not** require Landlock/Seatbelt privileges beyond what macOS/Linux grant 
 
 ```bash
 # macOS / Linux with kernel support
-KEEL_KERNEL_TEST=1 cargo test -p keel-exec-enforce -- --nocapture
+KEEL_KERNEL_TEST=1 cargo test -p eero-keel-enforce -- --nocapture
 
 # Linux with bubblewrap installed
-KEEL_KERNEL_TEST=1 cargo test -p keel-exec-enforce -- --nocapture
+KEEL_KERNEL_TEST=1 cargo test -p eero-keel-enforce -- --nocapture
 ```
 
 ## Manual smoke
 
 ```bash
 # Soft demo
-cargo run -p keel-exec-cli -- run --no-persist -- echo ok
+cargo run -p eero-keel-cli -- run --no-persist -- echo ok
 
 # Composition (worktree ⊕ local-process) — optimization plan Phase 1
-cargo run -p keel-exec-cli -- run --worktree --sandbox --no-persist -- echo sandboxed-wt
+cargo run -p eero-keel-cli -- run --worktree --sandbox --no-persist -- echo sandboxed-wt
 
 # Egress policy check
-cargo run -p keel-exec-cli -- check-egress evil.com --allow-host api.x.ai:443
+cargo run -p eero-keel-cli -- check-egress evil.com --allow-host api.x.ai:443
 ```
 
 ## CI recommendations

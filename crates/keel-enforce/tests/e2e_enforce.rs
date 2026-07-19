@@ -95,7 +95,7 @@ async fn composed_worktree_sandbox_apply_smoke() {
 }
 
 /// Real Seatbelt/Landlock: child cannot write outside workspace.
-/// Run: `KEEL_KERNEL_TEST=1 cargo test -p keel-exec-enforce --test e2e_enforce -- --nocapture`
+/// Run: `KEEL_KERNEL_TEST=1 cargo test -p eero-keel-enforce --test e2e_enforce -- --nocapture`
 #[tokio::test]
 async fn kernel_child_write_isolation() {
     if !kernel_tests_enabled() {

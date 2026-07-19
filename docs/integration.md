@@ -5,17 +5,17 @@ Keel owns **reach** (FS / network / credentials / worktree) when side effects ru
 
 ## Dependency
 
-On crates.io the packages are named **`keel-exec-*`** (see root README). Library
-imports still use `keel_core` / `keel_policy` / etc.
+On crates.io the packages are named **`eero-keel-*`** (owner EeroEternal; see root README).
+Library imports still use `keel_core` / `keel_policy` / etc.
 
 ```toml
 [dependencies]
-keel-exec-core = "0.0.9"
+eero-keel-core = "0.0.10"
 ```
 
 ```bash
 # CLI
-cargo install keel-exec-cli
+cargo install eero-keel-cli
 ```
 
 ## Minimal embed
@@ -85,7 +85,7 @@ space.destroy().await?;
 # }
 ```
 
-## Zene-oriented APIs (v0.0.9+)
+## Zene-oriented APIs (v0.0.10+)
 
 | Need | API |
 |------|-----|
