@@ -1,10 +1,21 @@
 [package]
-name = "keel-record"
+name = "keel-exec-record"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
 description = "Execution record — what actually happened inside a Keel space"
 rust-version.workspace = true
+documentation = "https://docs.rs/keel-exec-record"
+
+[lib]
+name = "keel_record"
+path = "src/lib.rs"
 
 [dependencies]
 keel-policy = { workspace = true }

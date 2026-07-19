@@ -1,10 +1,17 @@
 [package]
-name = "keel-cli"
+name = "keel-exec-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
 description = "Keel CLI — inspect policies and run commands inside an execution space"
 rust-version.workspace = true
+documentation = "https://docs.rs/keel-exec-cli"
 
 [[bin]]
 name = "keel"

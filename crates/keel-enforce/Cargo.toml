@@ -1,10 +1,21 @@
 [package]
-name = "keel-enforce"
+name = "keel-exec-enforce"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Enforce backends for Keel — map Policy to real boundaries"
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
+description = "Enforce backends for Keel — map Policy to real boundaries (Landlock/Seatbelt, worktree, egress)"
 rust-version.workspace = true
+documentation = "https://docs.rs/keel-exec-enforce"
+
+[lib]
+name = "keel_enforce"
+path = "src/lib.rs"
 
 [features]
 default = ["kernel"]

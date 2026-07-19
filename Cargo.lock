@@ -963,13 +963,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "keel-cli"
-version = "0.0.7"
+name = "keel-exec-cli"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "clap",
- "keel-core",
- "keel-policy",
+ "keel-exec-core",
+ "keel-exec-policy",
  "serde_json",
  "tokio",
  "tracing",
@@ -977,15 +977,15 @@ dependencies = [
 ]
 
 [[package]]
-name = "keel-core"
-version = "0.0.7"
+name = "keel-exec-core"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "keel-enforce",
- "keel-policy",
- "keel-record",
+ "keel-exec-enforce",
+ "keel-exec-policy",
+ "keel-exec-record",
  "serde",
  "serde_json",
  "tempfile",
@@ -996,8 +996,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "keel-enforce"
-version = "0.0.7"
+name = "keel-exec-enforce"
+version = "0.0.8"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1006,8 +1006,8 @@ dependencies = [
  "dunce",
  "globset",
  "ignore",
- "keel-policy",
- "keel-record",
+ "keel-exec-policy",
+ "keel-exec-record",
  "libc",
  "nono",
  "serde",
@@ -1018,8 +1018,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "keel-policy"
-version = "0.0.7"
+name = "keel-exec-policy"
+version = "0.0.8"
 dependencies = [
  "chrono",
  "serde",
@@ -1032,13 +1032,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "keel-record"
-version = "0.0.7"
+name = "keel-exec-record"
+version = "0.0.8"
 dependencies = [
  "async-trait",
  "chrono",
  "dirs",
- "keel-policy",
+ "keel-exec-policy",
  "serde",
  "serde_json",
  "thiserror",

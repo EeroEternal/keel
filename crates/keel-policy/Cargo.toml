@@ -1,10 +1,21 @@
 [package]
-name = "keel-policy"
+name = "keel-exec-policy"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+readme = "../../README.md"
 description = "Execution policy types for Keel — reach, network, credentials, TTL"
 rust-version.workspace = true
+documentation = "https://docs.rs/keel-exec-policy"
+
+[lib]
+name = "keel_policy"
+path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }

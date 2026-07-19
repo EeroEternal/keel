@@ -5,6 +5,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.8] — 2026-07-19
+
+### Changed
+
+- **First crates.io publish** under the **`keel-exec-*`** package names:
+  - `keel-exec-policy`, `keel-exec-record`, `keel-exec-enforce`, `keel-exec-core`, `keel-exec-cli`
+  - Plain `keel` / `keel-core` / `keel-cli` / `keel-enforce` are taken by unrelated crates on crates.io.
+  - Rust **library crate names** remain `keel_policy`, `keel_record`, `keel_enforce`, `keel_core` (no import breakage).
+  - CLI binary remains `keel` (`cargo install keel-exec-cli`).
+- Workspace deps use `package = "keel-exec-…"` + version for path/publish dual use.
+- README, Makefile, testing docs: `-p keel-exec-cli` / install instructions / naming table.
+
+### Documentation
+
+- Document crates.io naming collision and install paths.
+- Link package table and `docs.rs` targets from README.
+
+---
+
 ## [0.0.7] — 2026-07-18
 
 ### Added

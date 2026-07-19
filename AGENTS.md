@@ -32,9 +32,16 @@ Keel is the **execution layer under AI agents**: Policy · Enforce · Record · 
 - Prefer extending `EnforceBackend` over forking soft-check logic in callers.
 - Policy must not be expandable by the agent at runtime; grant reach before the space opens.
 
+## Packaging
+
+- **crates.io package names** are `keel-exec-policy`, `keel-exec-record`, `keel-exec-enforce`, `keel-exec-core`, `keel-exec-cli`.
+- Plain `keel` / `keel-core` / `keel-cli` / `keel-enforce` are taken by unrelated projects — do not rename back without checking crates.io.
+- Rust **lib names** stay `keel_policy`, `keel_record`, `keel_enforce`, `keel_core` via `[lib] name = "…"`.
+- Local directories remain `crates/keel-*`. Use `cargo build -p keel-exec-cli` (package name, not directory).
+
 ## Engineering conventions
 
-- Prefer targeted `cargo test -p <crate>` / `cargo check -p <crate>`; full workspace builds are fine but slower.
+- Prefer targeted `cargo test -p <package>` / `cargo check -p <package>`; full workspace builds are fine but slower.
 - Keep the public API small: `Policy`, `Space`, `EnforceBackend`, `RecordSink`.
 - Soft backends (`null`, `process-guard`) are not a security boundary; document that clearly in user-facing text.
 - Match existing Rust style in this tree (edition 2024, workspace deps, Apache-2.0 headers where present).

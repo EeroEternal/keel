@@ -1,7 +1,7 @@
 .PHONY: build test check fmt clippy run-info
 
 build:
-	cargo build -p keel-cli
+	cargo build -p keel-exec-cli
 
 test:
 	cargo test --workspace
@@ -16,4 +16,4 @@ clippy:
 	cargo clippy --workspace --all-targets -- -D warnings
 
 run-info:
-	cargo run -p keel-cli -- info
+	cargo run -p keel-exec-cli -- info

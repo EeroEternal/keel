@@ -3,6 +3,21 @@
 Keel is an **execution layer**: your agent still owns prompts, tools, and UX.
 Keel owns **reach** (FS / network / credentials / worktree) when side effects run.
 
+## Dependency
+
+On crates.io the packages are named **`keel-exec-*`** (see root README). Library
+imports still use `keel_core` / `keel_policy` / etc.
+
+```toml
+[dependencies]
+keel-exec-core = "0.0.8"
+```
+
+```bash
+# CLI
+cargo install keel-exec-cli
+```
+
 ## Minimal embed
 
 ```rust
