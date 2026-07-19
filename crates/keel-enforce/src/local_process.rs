@@ -522,9 +522,12 @@ fn attach_child_hooks(
                         Ok(_) => {}
                         Err(e) => return Err(std::io::Error::other(e.to_string())),
                     }
-                    // DenyAll still uses coarse seccomp; allowlist relies on ProxyOnly.
+                    // DenyAll: full network seccomp. Allowlist: ProxyOnly (kernel) +
+                    // server-block seccomp (no bind/listen); connect kept for HTTP_PROXY.
                     if restrict_net {
                         crate::child_net::install_child_network_filter()?;
+                    } else if proxy_port.is_some() {
+                        crate::child_net::install_child_server_block_filter()?;
                     }
                     let _ = std::fs::remove_file(&pf);
                     Ok(())

@@ -5,6 +5,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.13] — 2026-07-19
+
+### Added
+
+- **Audit hash chain** — `HashChainSink` seals each event with `prev_hash` + `event_hash` (SHA-256). Enabled by default via `SpaceOptions.integrity_chain`. Verify with `verify_chain` / `verify_jsonl`.
+- **Content digests** — SpaceFs `read` / `write` / `create` record optional `content_sha256` on `FsAccess` events.
+- **Allowlist child network hardening (Linux)** — when a CONNECT proxy is active, children get seccomp **server-block** (no bind/listen/accept) while `connect` remains for HTTP(S)_PROXY; outbound direct dial still relies on kernel **ProxyOnly**.
+- **Path edge tests** — symlink escape soft-deny, `a/../b` normalize.
+
+### Note
+
+- Hash chains detect **log tampering**, not a full WORM store. Netns / Windows Job / MSRV drop remain future work.
+
+---
+
 ## [0.0.12] — 2026-07-19
 
 ### Added (Fable / hard-boundary track)

@@ -10,7 +10,7 @@ Library imports still use `keel_core` / `keel_policy` / etc.
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.12"
+eero-keel-core = "0.0.13"
 ```
 
 ```bash
@@ -100,7 +100,7 @@ Default embed = **L1** (host stays clean). Call `Space::create_confined(policy, 
 Baseline **always-deny** (`~/.ssh`, `**/.env`, …) applies to all builder-built policies unless
 `Policy::builder(ws).without_baseline_denies()`.
 
-## Zene-oriented APIs (v0.0.12+)
+## Zene-oriented APIs (v0.0.13+)
 
 | Need | API |
 |------|-----|
@@ -112,6 +112,9 @@ Baseline **always-deny** (`~/.ssh`, `**/.env`, …) applies to all builder-built
 | Process-group cleanup | timeout / cancel / **Drop** (Unix) |
 | Whole-process sandbox | `Space::create_confined` |
 | Secret-safe exec logs | `.audit_args(false)` |
+| Audit integrity | default `integrity_chain`; `verify_chain` / `verify_jsonl` on `events.jsonl` |
+
+Disable hash chain only if needed: `SpaceOptions { integrity_chain: false, .. }`.
 
 ### SpaceFs soft boundary (keep host defenses)
 

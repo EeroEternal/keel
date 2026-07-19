@@ -1,19 +1,50 @@
-//! Per-child network filter (Linux seccomp). No-op elsewhere.
+//! Per-child network filters (Linux seccomp). No-op elsewhere.
 //!
-//! Used when the kernel FS sandbox is process-wide but the agent host must
-//! keep network for LLM/MCP, while child shells should not dial out.
+//! - **DenyAll / full block**: block connect/bind/listen/… so children cannot dial out.
+//! - **Allowlist / server block**: allow `connect` (so HTTP(S)_PROXY to localhost works)
+//!   but block bind/listen/accept so children cannot open listeners. Direct outbound
+//!   `connect()` is still constrained by kernel **ProxyOnly** (Landlock/Seatbelt via nono)
+//!   when the sandbox applies — this seccomp layer is complementary, not a full sockaddr
+//!   allowlist.
 
-/// Install seccomp BPF filter blocking outbound network syscalls.
+/// Install seccomp BPF filter blocking all major network syscalls (DenyAll children).
 ///
 /// # Safety
 ///
 /// Must be called in a `pre_exec` context (after `fork`, before `exec`).
 #[cfg(target_os = "linux")]
 pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
+    install_filter(&[
+        libc::SYS_connect,
+        libc::SYS_bind,
+        libc::SYS_sendto,
+        libc::SYS_sendmsg,
+        libc::SYS_listen,
+        libc::SYS_accept,
+        libc::SYS_accept4,
+    ])
+}
+
+/// Block server-side sockets; leave `connect` available for proxy clients (allowlist).
+///
+/// # Safety
+///
+/// Must be called in a `pre_exec` context.
+#[cfg(target_os = "linux")]
+pub unsafe fn install_child_server_block_filter() -> std::io::Result<()> {
+    install_filter(&[
+        libc::SYS_bind,
+        libc::SYS_listen,
+        libc::SYS_accept,
+        libc::SYS_accept4,
+    ])
+}
+
+#[cfg(target_os = "linux")]
+unsafe fn install_filter(blocked_syscalls: &[i64]) -> std::io::Result<()> {
     use libc::{
         BPF_ABS, BPF_JEQ, BPF_JMP, BPF_K, BPF_LD, BPF_RET, BPF_W, PR_SET_NO_NEW_PRIVS,
-        PR_SET_SECCOMP, SECCOMP_MODE_FILTER, SYS_accept, SYS_accept4, SYS_bind, SYS_connect,
-        SYS_listen, SYS_sendmsg, SYS_sendto, prctl, sock_filter, sock_fprog,
+        PR_SET_SECCOMP, SECCOMP_MODE_FILTER, prctl, sock_filter, sock_fprog,
     };
 
     const SECCOMP_RET_ALLOW: u32 = 0x7fff_0000;
@@ -43,16 +74,6 @@ pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
     }
 
     const NR_OFFSET: u32 = 0;
-
-    let blocked_syscalls: &[i64] = &[
-        SYS_connect,
-        SYS_bind,
-        SYS_sendto,
-        SYS_sendmsg,
-        SYS_listen,
-        SYS_accept,
-        SYS_accept4,
-    ];
 
     let mut filter: Vec<sock_filter> = Vec::new();
     let total_checks = blocked_syscalls.len();
@@ -98,9 +119,17 @@ pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
 }
 
 /// # Safety
-/// No-op on non-Linux (macOS has no per-child seccomp path yet).
+/// No-op on non-Linux.
 #[cfg(not(target_os = "linux"))]
 #[allow(dead_code)]
 pub unsafe fn install_child_network_filter() -> std::io::Result<()> {
+    Ok(())
+}
+
+/// # Safety
+/// No-op on non-Linux.
+#[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
+pub unsafe fn install_child_server_block_filter() -> std::io::Result<()> {
     Ok(())
 }

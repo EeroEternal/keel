@@ -274,7 +274,7 @@ impl EnforceBackend for ProcessGuardBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use keel_policy::profile_workspace;
+    use keel_policy::{profile_workspace, Policy};
     use std::path::Path;
 
     #[test]
@@ -336,5 +336,44 @@ mod tests {
         let deeper = soft_fs_resolve(&p, Path::new("a/b/c.txt"), true).unwrap();
         let rel2 = deeper.strip_prefix(&ws_canon).unwrap_or(deeper.as_path());
         assert_eq!(rel2, Path::new("a/b/c.txt"), "deeper={deeper:?}");
+    }
+
+    #[test]
+    fn soft_fs_resolve_symlink_escape_denied_by_soft_check() {
+        // Use a policy with *only* workspace write — not profile_workspace, which
+        // also allows /var/folders temps (macOS tempdir lives there).
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let outside = dir.path().join("outside");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("secret.txt"), b"x").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, ws.join("leak")).unwrap();
+            let p = Policy::builder(&ws)
+                .without_baseline_denies()
+                .default_read(true)
+                .read_write(&ws)
+                .build()
+                .unwrap();
+            let resolved = soft_fs_resolve(&p, Path::new("leak/secret.txt"), true).unwrap();
+            assert!(
+                !soft_fs_allowed(&p, &resolved, true),
+                "symlink escape should not be writable under soft policy; resolved={resolved:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn soft_fs_path_traversal_normalized() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        let p = profile_workspace(ws).unwrap();
+        // Logical traversal still lands under workspace after normalize/resolve.
+        let resolved = soft_fs_resolve(&p, Path::new("a/../b/c.txt"), true).unwrap();
+        let ws_canon = dunce::canonicalize(ws).unwrap_or_else(|_| ws.to_path_buf());
+        let rel = resolved.strip_prefix(&ws_canon).unwrap_or(resolved.as_path());
+        assert_eq!(rel, Path::new("b/c.txt"));
     }
 }

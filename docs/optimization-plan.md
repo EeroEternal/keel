@@ -8,7 +8,7 @@
 
 ---
 
-## Current baseline (v0.0.12)
+## Current baseline (v0.0.13)
 
 | Area | Status |
 |------|--------|

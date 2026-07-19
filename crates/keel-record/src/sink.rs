@@ -1,3 +1,4 @@
+use crate::chain::seal_event;
 use crate::event::RecordEvent;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
@@ -99,6 +100,43 @@ impl MultiSink {
     }
 }
 
+/// Wraps an inner sink and seals each event into a SHA-256 hash chain.
+pub struct HashChainSink {
+    inner: Arc<dyn RecordSink>,
+    last_hash: Mutex<Option<String>>,
+}
+
+impl HashChainSink {
+    pub fn new(inner: Arc<dyn RecordSink>) -> Self {
+        Self {
+            inner,
+            last_hash: Mutex::new(None),
+        }
+    }
+
+    pub fn wrap(inner: Arc<dyn RecordSink>) -> Arc<dyn RecordSink> {
+        Arc::new(Self::new(inner))
+    }
+}
+
+#[async_trait]
+impl RecordSink for HashChainSink {
+    async fn emit(&self, event: RecordEvent) -> std::io::Result<()> {
+        let mut guard = self.last_hash.lock().await;
+        let prev = guard.as_deref();
+        let sealed = seal_event(event, prev).map_err(|e| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, e)
+        })?;
+        *guard = sealed.event_hash.clone();
+        drop(guard);
+        self.inner.emit(sealed).await
+    }
+
+    async fn flush(&self) -> std::io::Result<()> {
+        self.inner.flush().await
+    }
+}
+
 /// Create the default on-disk JSONL sink for a space
 /// (`~/.keel/spaces/<id>/events.jsonl`).
 pub async fn default_space_sink(
@@ -128,6 +166,7 @@ impl RecordSink for MultiSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::chain::verify_chain;
     use crate::event::EventKind;
     use keel_policy::{PolicyId, SpaceId};
 
@@ -145,5 +184,31 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(sink.len().await, 1);
+    }
+
+    #[tokio::test]
+    async fn hash_chain_sink_seals() {
+        let mem = Arc::new(MemorySink::new());
+        let chained = HashChainSink::wrap(mem.clone());
+        for msg in ["a", "b", "c"] {
+            chained
+                .emit(RecordEvent::new(
+                    SpaceId::from_string("spc"),
+                    PolicyId::from_string("pol"),
+                    None,
+                    EventKind::Note {
+                        message: msg.into(),
+                    },
+                ))
+                .await
+                .unwrap();
+        }
+        let events = mem.events().await;
+        assert_eq!(events.len(), 3);
+        assert_eq!(
+            events[0].prev_hash.as_deref(),
+            Some(crate::chain::GENESIS_PREV)
+        );
+        assert!(verify_chain(&events).is_ok());
     }
 }

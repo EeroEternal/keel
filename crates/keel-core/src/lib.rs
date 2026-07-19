@@ -31,6 +31,7 @@ pub use keel_policy::{
     Policy, PolicyBuilder, PolicyId, SandboxConfig, SpaceId, TaskId, TaskSpec,
 };
 pub use keel_record::{
-    default_space_sink, keel_home, space_dir, space_events_path, space_policy_path, EventKind,
-    JsonlSink, MemorySink, MultiSink, RecordEvent, RecordSink,
+    content_sha256, default_space_sink, keel_home, space_dir, space_events_path,
+    space_policy_path, verify_chain, verify_jsonl, ChainVerifyError, EventKind, HashChainSink,
+    JsonlSink, MemorySink, MultiSink, RecordEvent, RecordSink, GENESIS_PREV,
 };

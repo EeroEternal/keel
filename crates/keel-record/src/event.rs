@@ -20,6 +20,9 @@ pub enum EventKind {
         path: PathBuf,
         operation: String,
         allowed: bool,
+        /// Optional SHA-256 of written/read payload (host SpaceFs writes).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content_sha256: Option<String>,
     },
     NetDial {
         host: String,
@@ -70,6 +73,12 @@ pub struct RecordEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<TaskId>,
     pub event: EventKind,
+    /// SHA-256 hex of previous event's `event_hash` (or genesis marker).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prev_hash: Option<String>,
+    /// SHA-256 hex of this event's integrity body (see `chain` module).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_hash: Option<String>,
 }
 
 impl RecordEvent {
@@ -85,6 +94,8 @@ impl RecordEvent {
             policy_id,
             task_id,
             event,
+            prev_hash: None,
+            event_hash: None,
         }
     }
 }

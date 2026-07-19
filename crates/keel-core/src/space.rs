@@ -5,8 +5,8 @@ use chrono::Utc;
 use keel_enforce::{EnforceBackend, SpawnRequest};
 use keel_policy::{Policy, SpaceId};
 use keel_record::{
-    default_space_sink, space_policy_path, EventKind, MemorySink, MultiSink, RecordEvent,
-    RecordSink,
+    default_space_sink, space_policy_path, EventKind, HashChainSink, MemorySink, MultiSink,
+    RecordEvent, RecordSink,
 };
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,6 +35,8 @@ pub struct SpaceOptions {
     pub strict_credentials: bool,
     /// If true, emit `Violation` events when check_fs / check_egress denies (default true).
     pub record_violations: bool,
+    /// Wrap the record sink in a SHA-256 hash chain (`prev_hash` / `event_hash`, default true).
+    pub integrity_chain: bool,
 }
 
 impl Default for SpaceOptions {
@@ -45,6 +47,7 @@ impl Default for SpaceOptions {
             persist_policy: true,
             strict_credentials: false,
             record_violations: true,
+            integrity_chain: true,
         }
     }
 }
@@ -112,6 +115,7 @@ impl SpaceHandle {
                 path: path.to_path_buf(),
                 operation: format!("check_{op}"),
                 allowed,
+                content_sha256: None,
             })
             .await?;
         if !allowed && self.inner.opts.record_violations {
@@ -331,7 +335,7 @@ impl Space {
         let id = SpaceId::new();
         let mut events_path = None;
 
-        let sink: Arc<dyn RecordSink> = if let Some(s) = sink_override {
+        let base_sink: Arc<dyn RecordSink> = if let Some(s) = sink_override {
             s
         } else {
             let mut parts: Vec<Arc<dyn RecordSink>> = Vec::new();
@@ -352,6 +356,11 @@ impl Space {
             } else {
                 Arc::new(MultiSink::new(parts))
             }
+        };
+        let sink: Arc<dyn RecordSink> = if opts.integrity_chain {
+            HashChainSink::wrap(base_sink)
+        } else {
+            base_sink
         };
 
         if opts.persist_policy && opts.persist_events {
@@ -452,6 +461,12 @@ impl Space {
     }
 }
 
+impl SpaceHandle {
+    pub(crate) async fn emit_kind(&self, event: EventKind) -> KeelResult<()> {
+        self.inner.emit(event).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -483,6 +498,38 @@ mod tests {
             .await
             .unwrap());
         space.destroy().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn integrity_chain_on_space_events() {
+        use keel_record::verify_chain;
+
+        let policy = profile_workspace(Path::new("/tmp/keel-chain-ws")).unwrap();
+        let sink = Arc::new(MemorySink::new());
+        let backend = Arc::new(ProcessGuardBackend::new());
+        let space = Space::create_with_sink(
+            policy,
+            backend,
+            SpaceOptions {
+                persist_events: false,
+                memory_events: true,
+                persist_policy: false,
+                integrity_chain: true,
+                ..Default::default()
+            },
+            Some(sink.clone()),
+        )
+        .await
+        .unwrap();
+        let _ = space
+            .check_fs(Path::new("/tmp/keel-chain-ws/x"), false)
+            .await
+            .unwrap();
+        space.destroy().await.unwrap();
+        let events = sink.events().await;
+        assert!(events.len() >= 2);
+        assert!(events.iter().all(|e| e.event_hash.is_some()));
+        assert!(verify_chain(&events).is_ok());
     }
 
     #[tokio::test]

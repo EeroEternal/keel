@@ -21,6 +21,7 @@
 use crate::error::{KeelError, KeelResult};
 use crate::space::SpaceHandle;
 use keel_enforce::{soft_fs_allowed, soft_fs_resolve};
+use keel_record::{content_sha256, EventKind};
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
@@ -36,9 +37,19 @@ impl SpaceFs {
 
     pub async fn read(&self, path: impl AsRef<Path>) -> KeelResult<Vec<u8>> {
         let resolved = self.authorize(path.as_ref(), false).await?;
-        tokio::fs::read(&resolved)
+        let data = tokio::fs::read(&resolved)
             .await
-            .map_err(|e| KeelError::Msg(format!("read {}: {e}", resolved.display())))
+            .map_err(|e| KeelError::Msg(format!("read {}: {e}", resolved.display())))?;
+        let digest = content_sha256(&data);
+        self.space
+            .emit_kind(EventKind::FsAccess {
+                path: resolved.clone(),
+                operation: "read".into(),
+                allowed: true,
+                content_sha256: Some(digest),
+            })
+            .await?;
+        Ok(data)
     }
 
     pub async fn read_to_string(&self, path: impl AsRef<Path>) -> KeelResult<String> {
@@ -53,9 +64,19 @@ impl SpaceFs {
                 KeelError::Msg(format!("create_dir_all {}: {e}", parent.display()))
             })?;
         }
-        tokio::fs::write(&resolved, data.as_ref())
+        let bytes = data.as_ref();
+        tokio::fs::write(&resolved, bytes)
             .await
-            .map_err(|e| KeelError::Msg(format!("write {}: {e}", resolved.display())))
+            .map_err(|e| KeelError::Msg(format!("write {}: {e}", resolved.display())))?;
+        self.space
+            .emit_kind(EventKind::FsAccess {
+                path: resolved,
+                operation: "write".into(),
+                allowed: true,
+                content_sha256: Some(content_sha256(bytes)),
+            })
+            .await?;
+        Ok(())
     }
 
     /// Create a new file; fails if it already exists.
@@ -72,9 +93,19 @@ impl SpaceFs {
                 KeelError::Msg(format!("create_dir_all {}: {e}", parent.display()))
             })?;
         }
-        tokio::fs::write(&resolved, data.as_ref())
+        let bytes = data.as_ref();
+        tokio::fs::write(&resolved, bytes)
             .await
-            .map_err(|e| KeelError::Msg(format!("create {}: {e}", resolved.display())))
+            .map_err(|e| KeelError::Msg(format!("create {}: {e}", resolved.display())))?;
+        self.space
+            .emit_kind(EventKind::FsAccess {
+                path: resolved,
+                operation: "create".into(),
+                allowed: true,
+                content_sha256: Some(content_sha256(bytes)),
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn delete(&self, path: impl AsRef<Path>) -> KeelResult<()> {
@@ -91,6 +122,14 @@ impl SpaceFs {
                 .await
                 .map_err(|e| KeelError::Msg(format!("delete {}: {e}", resolved.display())))?;
         }
+        self.space
+            .emit_kind(EventKind::FsAccess {
+                path: resolved,
+                operation: "delete".into(),
+                allowed: true,
+                content_sha256: None,
+            })
+            .await?;
         Ok(())
     }
 
@@ -112,7 +151,16 @@ impl SpaceFs {
                 from_r.display(),
                 to_r.display()
             ))
-        })
+        })?;
+        self.space
+            .emit_kind(EventKind::FsAccess {
+                path: to_r,
+                operation: "rename".into(),
+                allowed: true,
+                content_sha256: None,
+            })
+            .await?;
+        Ok(())
     }
 
     pub async fn metadata(&self, path: impl AsRef<Path>) -> KeelResult<SpacePathMeta> {
