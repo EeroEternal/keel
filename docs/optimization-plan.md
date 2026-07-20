@@ -8,28 +8,30 @@
 
 ---
 
-## Current baseline (v0.0.13)
+## Current baseline (v0.0.15)
+
+Fable review + delivery tracker: [`optimization-review-fable.md`](./optimization-review-fable.md).
 
 | Area | Status |
 |------|--------|
-| Policy + presets + **baseline always-deny** | Done |
+| Policy + presets + **baseline always-deny** | Done (0.0.12) |
 | `process-guard` / `local-process` / `local-worktree` | Done |
-| Isolate child apply (default) + **`create_confined`** | Done |
-| Linux bwrap read-deny (auto when denies present) | Done |
-| Egress allowlist + CONNECT proxy + ProxyOnly | Done (seccomp loopback-only still open) |
+| Isolate child apply (default) + **`create_confined`** | Done (0.0.12) |
+| Linux bwrap read-deny (auto when denies present) | Done (0.0.12) |
+| Egress allowlist + CONNECT proxy + ProxyOnly + server-block | Done partial (0.0.12–0.0.13); sockaddr seccomp / netns open |
 | JIT credentials (env/file) | Done |
 | Per-task `narrow_policy` / `open_task` | Done |
-| Space event JSONL | Done |
-| **SpaceFs preferred**; `check_fs` advisory | Done (docs + API) |
-| Deny **glob** soft + kernel map | Partial → improved with baseline globs |
+| Space event JSONL + **hash chain** | Done (0.0.13) |
+| **SpaceFs preferred**; `check_fs` advisory | Done (0.0.12) |
+| Deny **glob** + baseline secrets | Done (0.0.12) |
 | Worktree **+** kernel composed | Done (API + CLI `--sandbox`) |
-| Real kernel e2e | Thin |
-| `sandbox.toml` | Done |
-| Host integration guide | Done |
-| Hash-chain audit | Done (0.0.13) |
 | Windows Job Objects | Done (0.0.14) |
 | Windows AppContainer + path grants | Done (0.0.15) |
-| netns | Not started |
+| Real kernel / Windows runtime e2e | Thin |
+| `sandbox.toml` | Done |
+| Host integration guide | Done |
+| Lower MSRV | **Won’t do** (stay 1.93) |
+| netns / warm pool / fuzz CI | Not started |
 
 ---
 

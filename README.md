@@ -57,7 +57,8 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 Windows **Job Objects** + **AppContainer** (path grants + CreateProcess); baseline denies;
 SpaceFs-first; hash-chain audit; Unix Landlock/Seatbelt/seccomp as before.
 
-See [CHANGELOG.md](CHANGELOG.md), [design](docs/design.md), and [host integration](docs/integration.md).
+See [CHANGELOG.md](CHANGELOG.md), [design](docs/design.md), [host integration](docs/integration.md),
+and [optimization review (Fable)](docs/optimization-review-fable.md).
 
 ## Install
 
@@ -211,7 +212,7 @@ Custom profiles: builder API, JSON/TOML, or `sandbox.toml` (`~/.keel/sandbox.tom
 ## Links
 
 - Repository: [github.com/EeroEternal/keel](https://github.com/EeroEternal/keel)
-- [Design](docs/design.md) · [Integration](docs/integration.md) · [Testing](docs/testing.md) · [Changelog](CHANGELOG.md)
+- [Design](docs/design.md) · [Integration](docs/integration.md) · [Testing](docs/testing.md) · [Optimization plan](docs/optimization-plan.md) · [Optimization review (Fable)](docs/optimization-review-fable.md) · [Changelog](CHANGELOG.md)
 
 ## License
 
