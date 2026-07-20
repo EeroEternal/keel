@@ -5,6 +5,27 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.15] — 2026-07-20
+
+### Added (Windows AppContainer)
+
+- **AppContainer profiles** per policy (`CreateAppContainerProfile` / derive existing).
+- **Path grants** via `icacls` for workspace + read/write roots (+ system dirs for launch).
+- **Spawn inside AppContainer** with `PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES`, optional
+  `internetClient` capability when network is not DenyAll, Job Object assignment, suspended
+  start then resume.
+- **`SpawnedProcess` dual backend**: Tokio child (Unix / Job-only) or Windows native process
+  (AppContainer); `ManagedProcess::child_mut` is now `Option`.
+- Option: `LocalProcessOptions.windows_appcontainer` (default true; fail closed if
+  `require_kernel` and setup/spawn fails).
+
+### Note
+
+- AppContainer grants depend on `icacls` and Windows 8+ isolation. Not a full Landlock twin;
+  capability set is minimal. Prefer Windows CI for runtime validation.
+
+---
+
 ## [0.0.14] — 2026-07-20
 
 ### Added (Windows isolation)
@@ -12,16 +33,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 - **Windows Job Objects** on `LocalProcessBackend`: each child is assigned to a job with
   `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Cancel / timeout / Drop terminate the **whole job**
   (process tree), analogous to Unix process groups.
-- **Restricted token probe** (`CreateRestrictedToken` + `DISABLE_MAX_PRIVILEGE`) to confirm
-  APIs for a future `CreateProcessAsUser` path.
+- **Restricted token probe** (`CreateRestrictedToken` + `DISABLE_MAX_PRIVILEGE`).
 - Options: `LocalProcessOptions.windows_job` / `windows_restricted_token` (default true).
 - Module `windows_sandbox` (cfg windows only); cross-checked against `x86_64-pc-windows-gnu`.
-
-### Note
-
-- **AppContainer path ACLs** (capability SIDs + profile + file grants) remain **deferred**.
-  Windows FS isolation is still soft policy + Job lifecycle; not Landlock-equivalent yet.
-- Host `create_confined` on Windows records Job capability for children (does not Landlock the host).
 
 ---
 

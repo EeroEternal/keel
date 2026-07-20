@@ -194,7 +194,7 @@ pub fn capability_summary(opts: &WindowsSandboxOptions) -> String {
         parts.push("restricted-token(probe)");
     }
     parts.push("soft-fs-policy");
-    parts.push("appcontainer=deferred");
+    parts.push("appcontainer=optional");
     parts.join(" + ")
 }
 

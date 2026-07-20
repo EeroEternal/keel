@@ -30,6 +30,8 @@ mod bwrap;
 
 #[cfg(windows)]
 mod windows_sandbox;
+#[cfg(windows)]
+mod windows_appcontainer;
 
 mod local_process;
 
@@ -66,4 +68,10 @@ pub use sandbox_child::{
 pub use windows_sandbox::{
     capability_summary as windows_capability_summary, job_objects_supported,
     try_create_restricted_token, Job as WindowsJob, WindowsSandboxOptions,
+};
+
+#[cfg(windows)]
+pub use windows_appcontainer::{
+    appcontainer_supported, delete_profile as delete_appcontainer_profile, AppContainerProfile,
+    NativeChild as WindowsNativeChild,
 };

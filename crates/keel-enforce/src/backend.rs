@@ -217,37 +217,40 @@ impl SpawnRequest {
     }
 }
 
-/// Low-level child handle with process-group / Job-aware wait/kill.
+/// Low-level child handle with process-group / Job / AppContainer-aware wait/kill.
 ///
 /// Prefer [`keel_core::ManagedProcess`] from a [`Space`] so exit is audited.
 ///
 /// On [`Drop`], if the child is still running, Keel kills the **process group**
-/// (Unix) or **Job Object** (Windows) when enabled — not only the direct child —
-/// so shell grandchildren are less likely to leak after an unexpected drop.
+/// (Unix) or **Job Object** (Windows) when enabled — not only the direct child.
 pub struct SpawnedProcess {
-    pub child: tokio::process::Child,
+    /// Tokio child (Unix and Windows Job-only spawns). Prefer [`Self::child_mut`].
+    pub child: Option<tokio::process::Child>,
     started_at: Instant,
     process_group: bool,
-    /// Set after a successful wait so Drop does not re-kill.
     finished: bool,
-    /// Windows Job Object holding this child (and its descendants).
     #[cfg(windows)]
     job: Option<crate::windows_sandbox::Job>,
+    /// Windows AppContainer CreateProcess path (stdio as files).
+    #[cfg(windows)]
+    native: Option<crate::windows_appcontainer::NativeChild>,
 }
 
 impl SpawnedProcess {
     pub fn new(child: tokio::process::Child, process_group: bool) -> Self {
         Self {
-            child,
+            child: Some(child),
             started_at: Instant::now(),
             process_group,
             finished: false,
             #[cfg(windows)]
             job: None,
+            #[cfg(windows)]
+            native: None,
         }
     }
 
-    /// Windows: attach an existing Job Object that already contains `child`.
+    /// Windows: Tokio child assigned to a Job Object.
     #[cfg(windows)]
     pub fn with_job(
         child: tokio::process::Child,
@@ -255,11 +258,25 @@ impl SpawnedProcess {
         job: crate::windows_sandbox::Job,
     ) -> Self {
         Self {
-            child,
+            child: Some(child),
             started_at: Instant::now(),
             process_group,
             finished: false,
             job: Some(job),
+            native: None,
+        }
+    }
+
+    /// Windows: AppContainer + Job native process.
+    #[cfg(windows)]
+    pub fn with_native(native: crate::windows_appcontainer::NativeChild) -> Self {
+        Self {
+            child: None,
+            started_at: Instant::now(),
+            process_group: true,
+            finished: false,
+            job: None,
+            native: Some(native),
         }
     }
 
@@ -271,21 +288,59 @@ impl SpawnedProcess {
         self.process_group
     }
 
-    /// Kill the process group (Unix), Job Object (Windows), or the direct child.
+    /// Access the Tokio child when present (not AppContainer native spawn).
+    pub fn child_mut(&mut self) -> Option<&mut tokio::process::Child> {
+        self.child.as_mut()
+    }
+
+    pub fn child_ref(&self) -> Option<&tokio::process::Child> {
+        self.child.as_ref()
+    }
+
+    /// Kill process group (Unix), Job Object / native (Windows), or the direct child.
     pub fn kill_tree(&mut self) -> std::io::Result<()> {
         #[cfg(windows)]
         {
+            if let Some(native) = self.native.as_mut() {
+                return native.kill();
+            }
             if let Some(job) = self.job.as_ref() {
                 return job.terminate();
             }
         }
-        kill_tree_of(&mut self.child, self.process_group)
+        if let Some(child) = self.child.as_mut() {
+            return kill_tree_of(child, self.process_group);
+        }
+        Ok(())
+    }
+
+    async fn wait_status(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        #[cfg(windows)]
+        if let Some(native) = self.native.as_mut() {
+            return native.wait().await;
+        }
+        self.child
+            .as_mut()
+            .ok_or_else(|| std::io::Error::other("no child process"))?
+            .wait()
+            .await
+    }
+
+    fn try_wait_status(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        #[cfg(windows)]
+        if let Some(native) = self.native.as_mut() {
+            return native.try_wait();
+        }
+        match self.child.as_mut() {
+            Some(c) => c.try_wait(),
+            None => Ok(None),
+        }
     }
 
     /// Wait until exit; does not kill.
     pub async fn wait(mut self) -> std::io::Result<ProcessExit> {
         let started = self.started_at;
-        let status = self.child.wait().await?;
+        let status = self.wait_status().await?;
         self.finished = true;
         Ok(ProcessExit::from_status(
             status,
@@ -294,10 +349,10 @@ impl SpawnedProcess {
         ))
     }
 
-    /// Wait with timeout; on timeout, kill the process group then wait.
+    /// Wait with timeout; on timeout, kill the process tree then wait.
     pub async fn wait_timeout(mut self, timeout: Duration) -> std::io::Result<ProcessExit> {
         let started = self.started_at;
-        match tokio::time::timeout(timeout, self.child.wait()).await {
+        match tokio::time::timeout(timeout, self.wait_status()).await {
             Ok(Ok(status)) => {
                 self.finished = true;
                 Ok(ProcessExit::from_status(
@@ -309,7 +364,7 @@ impl SpawnedProcess {
             Ok(Err(e)) => Err(e),
             Err(_elapsed) => {
                 let _ = self.kill_tree();
-                let status = self.child.wait().await?;
+                let status = self.wait_status().await?;
                 self.finished = true;
                 Ok(ProcessExit::from_status(
                     status,
@@ -320,11 +375,11 @@ impl SpawnedProcess {
         }
     }
 
-    /// Cancel: kill process group / job, wait, mark reason cancelled.
+    /// Cancel: kill tree, wait, mark reason cancelled.
     pub async fn cancel(mut self) -> std::io::Result<ProcessExit> {
         let started = self.started_at;
         let _ = self.kill_tree();
-        let status = self.child.wait().await?;
+        let status = self.wait_status().await?;
         self.finished = true;
         Ok(ProcessExit::from_status(
             status,
@@ -333,13 +388,11 @@ impl SpawnedProcess {
         ))
     }
 
-    /// Wait and collect stdout/stderr when piped (same as `Child::wait_with_output`).
+    /// Wait and collect stdout/stderr when piped.
     pub async fn wait_with_output(mut self) -> std::io::Result<(ProcessExit, std::process::Output)> {
-        // No deadline; pipe-collect + wait (must not move `child` out — we implement Drop).
         self.collect_output_after(None).await
     }
 
-    /// Collect piped stdout/stderr with a deadline; kill process group on timeout.
     pub async fn wait_with_output_timeout(
         mut self,
         timeout: Duration,
@@ -348,9 +401,6 @@ impl SpawnedProcess {
             .await
     }
 
-    /// Collect piped stdout/stderr until exit, timeout, or cancel.
-    ///
-    /// Priority on concurrent events: **cancel** > **timeout** > **exit** (biased select).
     pub async fn wait_with_output_cancel(
         mut self,
         token: &tokio_util::sync::CancellationToken,
@@ -371,13 +421,29 @@ impl SpawnedProcess {
 
         let started = self.started_at;
 
-        let stdout_pipe = self.child.stdout.take();
-        let stderr_pipe = self.child.stderr.take();
+        // Take stdio from Tokio child or Windows native pipes.
+        #[cfg(windows)]
+        let (stdout_file, stderr_file) = {
+            if let Some(native) = self.native.as_mut() {
+                (native.stdout.take(), native.stderr.take())
+            } else {
+                (None, None)
+            }
+        };
+        #[cfg(not(windows))]
+        let (stdout_file, stderr_file): (Option<std::fs::File>, Option<std::fs::File>) =
+            (None, None);
+
+        let stdout_pipe = self.child.as_mut().and_then(|c| c.stdout.take());
+        let stderr_pipe = self.child.as_mut().and_then(|c| c.stderr.take());
 
         let stdout_task = tokio::spawn(async move {
             let mut buf = Vec::new();
             if let Some(mut s) = stdout_pipe {
                 let _ = s.read_to_end(&mut buf).await;
+            } else if let Some(f) = stdout_file {
+                let mut f = tokio::fs::File::from_std(f);
+                let _ = f.read_to_end(&mut buf).await;
             }
             buf
         });
@@ -385,22 +451,25 @@ impl SpawnedProcess {
             let mut buf = Vec::new();
             if let Some(mut s) = stderr_pipe {
                 let _ = s.read_to_end(&mut buf).await;
+            } else if let Some(f) = stderr_file {
+                let mut f = tokio::fs::File::from_std(f);
+                let _ = f.read_to_end(&mut buf).await;
             }
             buf
         });
 
         let (status, reason) = match deadline {
             None => {
-                let status = self.child.wait().await?;
+                let status = self.wait_status().await?;
                 (status, TerminationReason::Exited)
             }
             Some(OutputDeadline::Timeout(timeout)) => {
-                match tokio::time::timeout(timeout, self.child.wait()).await {
+                match tokio::time::timeout(timeout, self.wait_status()).await {
                     Ok(Ok(s)) => (s, TerminationReason::Exited),
                     Ok(Err(e)) => return Err(e),
                     Err(_elapsed) => {
                         let _ = self.kill_tree();
-                        let s = self.child.wait().await?;
+                        let s = self.wait_status().await?;
                         (s, TerminationReason::TimedOut)
                     }
                 }
@@ -410,15 +479,15 @@ impl SpawnedProcess {
                     biased;
                     _ = token.cancelled() => {
                         let _ = self.kill_tree();
-                        let s = self.child.wait().await?;
+                        let s = self.wait_status().await?;
                         (s, TerminationReason::Cancelled)
                     }
                     _ = tokio::time::sleep(timeout) => {
                         let _ = self.kill_tree();
-                        let s = self.child.wait().await?;
+                        let s = self.wait_status().await?;
                         (s, TerminationReason::TimedOut)
                     }
-                    status = self.child.wait() => {
+                    status = self.wait_status() => {
                         (status?, TerminationReason::Exited)
                     }
                 }
@@ -453,12 +522,9 @@ impl Drop for SpawnedProcess {
         if self.finished {
             return;
         }
-        match self.child.try_wait() {
-            Ok(Some(_)) => {
-                // Already exited / reaped.
-            }
+        match self.try_wait_status() {
+            Ok(Some(_)) => {}
             _ => {
-                // Kill process group (Unix) or Job Object (Windows).
                 let _ = self.kill_tree();
             }
         }
@@ -470,12 +536,10 @@ fn kill_tree_of(child: &mut tokio::process::Child, process_group: bool) -> std::
     {
         if process_group {
             if let Some(pid) = child.id() {
-                // Child is group leader when spawned with process_group(0).
                 let rc = unsafe { libc::kill(-(pid as i32), libc::SIGKILL) };
                 if rc == 0 {
                     return Ok(());
                 }
-                // Fall through to start_kill if killpg failed (e.g. already dead).
             }
         }
     }

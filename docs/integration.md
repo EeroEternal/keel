@@ -10,7 +10,7 @@ Library imports still use `keel_core` / `keel_policy` / etc.
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.14"
+eero-keel-core = "0.0.15"
 ```
 
 ```bash

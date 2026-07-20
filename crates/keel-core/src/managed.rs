@@ -7,13 +7,13 @@ use keel_record::EventKind;
 use std::process::Output;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::process::{ChildStderr, ChildStdin, ChildStdout};
+use tokio::process::{Child, ChildStderr, ChildStdin, ChildStdout};
 use tokio_util::sync::CancellationToken;
 
 /// Process spawned under a space: stdio access + tree kill + audit on wait.
 ///
-/// Dropping without wait/cancel kills the process group (via [`SpawnedProcess`]'s
-/// `Drop`), not only the direct child.
+/// Dropping without wait/cancel kills the process group / Job (via
+/// [`SpawnedProcess`]'s `Drop`), not only the direct child.
 pub struct ManagedProcess {
     pub(crate) inner: SpawnedProcess,
     pub(crate) space: Arc<Space>,
@@ -21,24 +21,25 @@ pub struct ManagedProcess {
 }
 
 impl ManagedProcess {
-    pub fn child(&self) -> &tokio::process::Child {
-        &self.inner.child
+    /// Tokio child when present (not Windows AppContainer native spawn).
+    pub fn child(&self) -> Option<&Child> {
+        self.inner.child_ref()
     }
 
-    pub fn child_mut(&mut self) -> &mut tokio::process::Child {
-        &mut self.inner.child
+    pub fn child_mut(&mut self) -> Option<&mut Child> {
+        self.inner.child_mut()
     }
 
     pub fn take_stdin(&mut self) -> Option<ChildStdin> {
-        self.inner.child.stdin.take()
+        self.inner.child_mut().and_then(|c| c.stdin.take())
     }
 
     pub fn take_stdout(&mut self) -> Option<ChildStdout> {
-        self.inner.child.stdout.take()
+        self.inner.child_mut().and_then(|c| c.stdout.take())
     }
 
     pub fn take_stderr(&mut self) -> Option<ChildStderr> {
-        self.inner.child.stderr.take()
+        self.inner.child_mut().and_then(|c| c.stderr.take())
     }
 
     /// Drop into the low-level handle (no further automatic ExecFinished from this type).
@@ -46,7 +47,7 @@ impl ManagedProcess {
         self.inner
     }
 
-    /// Kill the process group (Unix) or the child; does not wait or audit.
+    /// Kill the process group / Job; does not wait or audit.
     pub fn kill_tree(&mut self) -> std::io::Result<()> {
         self.inner.kill_tree()
     }
@@ -59,7 +60,6 @@ impl ManagedProcess {
         Ok(exit)
     }
 
-    /// On timeout, kill the whole process group, wait, audit as `timed_out`.
     pub async fn wait_timeout(self, timeout: Duration) -> KeelResult<ProcessExit> {
         let program = self.program;
         let space = self.space;
@@ -68,7 +68,6 @@ impl ManagedProcess {
         Ok(exit)
     }
 
-    /// Cancel / host abort: kill tree, audit as `cancelled`.
     pub async fn cancel(self) -> KeelResult<ProcessExit> {
         let program = self.program;
         let space = self.space;
@@ -77,7 +76,6 @@ impl ManagedProcess {
         Ok(exit)
     }
 
-    /// Wait and collect piped stdout/stderr (CLI-style capture).
     pub async fn wait_with_output(self) -> KeelResult<(ProcessExit, Output)> {
         let program = self.program;
         let space = self.space;
@@ -86,7 +84,6 @@ impl ManagedProcess {
         Ok((exit, output))
     }
 
-    /// Collect stdout/stderr with a deadline; process-group kill on timeout.
     pub async fn wait_with_output_timeout(
         self,
         timeout: Duration,
@@ -98,9 +95,6 @@ impl ManagedProcess {
         Ok((exit, output))
     }
 
-    /// Collect stdout/stderr until exit, cancel, or timeout (for Zene `CancellationToken`).
-    ///
-    /// On cancel → `termination_reason = cancelled`; on timeout → `timed_out`.
     pub async fn wait_with_output_cancel(
         self,
         token: &CancellationToken,

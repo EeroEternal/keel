@@ -55,8 +55,11 @@ pub struct LocalProcessOptions {
     pub auto_bwrap: bool,
     /// Windows: place each child in a Job Object (default true).
     pub windows_job: bool,
-    /// Windows: probe/create restricted tokens (default true; spawn still Job-based).
+    /// Windows: probe restricted-token APIs (default true).
     pub windows_restricted_token: bool,
+    /// Windows: create an AppContainer profile, grant policy paths, spawn inside it (default true).
+    /// Falls back to Job-only if AppContainer setup fails and `require_kernel` is false.
+    pub windows_appcontainer: bool,
 }
 
 impl Default for LocalProcessOptions {
@@ -68,6 +71,7 @@ impl Default for LocalProcessOptions {
             auto_bwrap: true,
             windows_job: true,
             windows_restricted_token: true,
+            windows_appcontainer: true,
         }
     }
 }
@@ -90,6 +94,9 @@ pub struct LocalProcessBackend {
     restrict_child_net: AtomicBool,
     /// Active egress proxy when policy is an allowlist.
     egress: tokio::sync::Mutex<Option<Arc<crate::egress_proxy::EgressProxy>>>,
+    /// Windows AppContainer profile for this space (when enabled).
+    #[cfg(windows)]
+    appcontainer: tokio::sync::Mutex<Option<crate::windows_appcontainer::AppContainerProfile>>,
 }
 
 impl LocalProcessBackend {
@@ -103,6 +110,8 @@ impl LocalProcessBackend {
             applied: AtomicBool::new(false),
             restrict_child_net: AtomicBool::new(false),
             egress: tokio::sync::Mutex::new(None),
+            #[cfg(windows)]
+            appcontainer: tokio::sync::Mutex::new(None),
         }
     }
 
@@ -280,7 +289,6 @@ impl LocalProcessBackend {
         if self.opts.windows_job {
             match crate::windows_sandbox::Job::create() {
                 Ok(job) => {
-                    // Probe only — per-child jobs are created at spawn.
                     drop(job);
                 }
                 Err(e) => {
@@ -294,17 +302,32 @@ impl LocalProcessBackend {
         }
 
         if self.opts.windows_restricted_token {
-            match crate::windows_sandbox::try_create_restricted_token() {
-                Ok(_tok) => {
-                    info!("Windows restricted token API available");
+            if let Err(e) = crate::windows_sandbox::try_create_restricted_token() {
+                warn!(error = %e, "Windows restricted token probe failed");
+            }
+        }
+
+        let mut ac_note = String::new();
+        if self.opts.windows_appcontainer {
+            match crate::windows_appcontainer::AppContainerProfile::create_for_policy(policy) {
+                Ok(profile) => {
+                    ac_note = format!(
+                        "appcontainer={} sid={}",
+                        profile.name(),
+                        profile.sid_string()
+                    );
+                    *self.appcontainer.lock().await = Some(profile);
                 }
                 Err(e) => {
-                    warn!(error = %e, "Windows restricted token probe failed (continuing with jobs)");
+                    let msg = format!("AppContainer profile failed: {e}");
+                    if self.opts.require_kernel {
+                        return Err(EnforceError::ApplyFailed(msg));
+                    }
+                    warn!("{msg}; falling back to Job-only");
                 }
             }
         }
 
-        // Optional egress proxy for allowlists (proxy-aware tools).
         let mut egress_note = String::new();
         if matches!(policy.network, NetworkPolicy::Allowlist(_)) {
             let proxy =
@@ -319,11 +342,15 @@ impl LocalProcessBackend {
 
         self.applied.store(true, Ordering::Release);
         let caps = crate::windows_sandbox::capability_summary(&win_opts);
-        let msg = if egress_note.is_empty() {
-            format!("local-process Windows: {caps}")
-        } else {
-            format!("local-process Windows: {caps}; {egress_note}")
-        };
+        let mut msg = format!("local-process Windows: {caps}");
+        if !ac_note.is_empty() {
+            msg.push_str("; ");
+            msg.push_str(&ac_note);
+        }
+        if !egress_note.is_empty() {
+            msg.push_str("; ");
+            msg.push_str(&egress_note);
+        }
         info!(policy_id = %policy.id, "{msg}");
         let _ = sink
             .emit(RecordEvent::new(
@@ -341,7 +368,6 @@ impl LocalProcessBackend {
         policy: &Policy,
         mut req: SpawnRequest,
     ) -> EnforceResult<SpawnedProcess> {
-        // Soft FS: program path when absolute.
         let prog = Path::new(&req.program);
         if prog.is_absolute() && !process_guard::soft_fs_allowed(policy, prog, false) {
             return Err(EnforceError::Denied(format!(
@@ -350,7 +376,6 @@ impl LocalProcessBackend {
             )));
         }
 
-        // Inject egress proxy env for allowlisted spaces.
         {
             let guard = self.egress.lock().await;
             if let Some(proxy) = guard.as_ref() {
@@ -362,6 +387,39 @@ impl LocalProcessBackend {
             }
         }
 
+        let allow_network = !matches!(policy.network, NetworkPolicy::DenyAll)
+            && !self.opts.block_process_network;
+
+        // Prefer AppContainer CreateProcess when profile is ready.
+        {
+            let guard = self.appcontainer.lock().await;
+            if let Some(profile) = guard.as_ref() {
+                let stdin_null = matches!(req.stdin, crate::backend::StdioMode::Null);
+                match crate::windows_appcontainer::spawn_in_appcontainer(
+                    profile,
+                    &req.program,
+                    &req.args,
+                    req.cwd.as_deref(),
+                    &req.env,
+                    stdin_null,
+                    self.opts.windows_job,
+                    allow_network,
+                ) {
+                    Ok(native) => {
+                        return Ok(SpawnedProcess::with_native(native));
+                    }
+                    Err(e) => {
+                        let msg = format!("AppContainer spawn failed: {e}");
+                        if self.opts.require_kernel {
+                            return Err(EnforceError::ApplyFailed(msg));
+                        }
+                        warn!("{msg}; falling back to Job-only tokio spawn");
+                    }
+                }
+            }
+        }
+
+        // Job-only fallback (tokio child).
         let process_group = req.process_group;
         let mut cmd = base_command(&req);
         let child = cmd.spawn()?;
@@ -373,7 +431,6 @@ impl LocalProcessBackend {
                         if let Err(e) = job.assign_pid(pid) {
                             warn!(error = %e, pid, "AssignProcessToJobObject failed");
                             if self.opts.require_kernel {
-                                // Best-effort kill the orphaned child.
                                 let mut orphan = SpawnedProcess::new(child, process_group);
                                 let _ = orphan.kill_tree();
                                 return Err(EnforceError::ApplyFailed(format!(

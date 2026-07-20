@@ -52,10 +52,10 @@ Named after a ship’s **keel**: the structural spine underneath. The agent ride
 
 ## Status
 
-**v0.0.14** on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).
+**v0.0.15** on [crates.io](https://crates.io) as **`eero-keel-*`** (owner [EeroEternal](https://crates.io/users/EeroEternal)).
 
-Windows **Job Objects** for process-tree kill; baseline denies; SpaceFs-first; hash-chain audit;
-Unix Landlock/Seatbelt/seccomp as before.
+Windows **Job Objects** + **AppContainer** (path grants + CreateProcess); baseline denies;
+SpaceFs-first; hash-chain audit; Unix Landlock/Seatbelt/seccomp as before.
 
 See [CHANGELOG.md](CHANGELOG.md), [design](docs/design.md), and [host integration](docs/integration.md).
 
@@ -74,7 +74,7 @@ keel info
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.14"
+eero-keel-core = "0.0.15"
 ```
 
 Rust imports use short crate names (`keel_core`, `keel_policy`, …), not the crates.io package prefix:
@@ -175,12 +175,13 @@ open Space (bind policy)
 |---------|-----------|--------|
 | `null` | Record only; accept policy | done |
 | `process-guard` | Soft FS / exec checks | done |
-| `local-process` | **Linux:** Landlock + bwrap + seccomp · **macOS:** Seatbelt · **Windows:** Job Objects (tree kill) + soft FS · children by default | done |
+| `local-process` | **Linux:** Landlock + bwrap + seccomp · **macOS:** Seatbelt · **Windows:** Job Objects + AppContainer (path grants) · children by default | done |
 | `local-worktree` | Git worktree or directory under `~/.keel/worktrees/` | done |
 | `remote-microvm` | Guest microVM | future — [docs](docs/future-remote-microvm.md) |
 
-**Windows notes:** Jobs provide process-tree lifecycle (cancel/timeout/Drop). Full AppContainer
-file ACLs are not yet applied — treat FS as soft policy on Windows until that lands.
+**Windows notes:** Jobs kill process trees on cancel/timeout/Drop. AppContainer profiles +
+`icacls` grants enforce OS-level FS reach for children when `windows_appcontainer` is enabled
+(default). Capability set is minimal (`internetClient` when network is not DenyAll).
 
 ```bash
 # Kernel FS on children; events under ~/.keel/spaces/

@@ -27,7 +27,8 @@
 | `sandbox.toml` | Done |
 | Host integration guide | Done |
 | Hash-chain audit | Done (0.0.13) |
-| Windows Job Objects | Done (0.0.14); AppContainer FS ACLs deferred |
+| Windows Job Objects | Done (0.0.14) |
+| Windows AppContainer + path grants | Done (0.0.15) |
 | netns | Not started |
 
 ---

@@ -3,7 +3,10 @@
 use crate::error::{EnforceError, EnforceResult};
 use keel_policy::{FsAccess, Policy};
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::warn;
+// seatbelt path uses `info!` only on macOS; keep available without unused-import noise on other targets.
+#[cfg(target_os = "macos")]
+use tracing::info;
 
 /// Maximum matches per glob (fail closed if exceeded under require_kernel).
 pub const DENY_GLOB_MAX_MATCHES: usize = 10_000;

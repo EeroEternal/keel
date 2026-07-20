@@ -10,7 +10,7 @@ members = [
 default-members = ["crates/keel-cli"]
 
 [workspace.package]
-version = "0.0.14"
+version = "0.0.15"
 edition = "2024"
 license = "Apache-2.0"
 repository = "https://github.com/EeroEternal/keel"
@@ -23,10 +23,10 @@ categories = ["command-line-utilities", "development-tools", "os"]
 [workspace.dependencies]
 # crates.io packages: eero-keel-* (owner EeroEternal). Plain keel-* and keel-exec-* are taken/other-owned.
 # Rust lib crate names stay keel_* via each crate's [lib] name.
-keel-policy = { package = "eero-keel-policy", path = "crates/keel-policy", version = "0.0.14" }
-keel-record = { package = "eero-keel-record", path = "crates/keel-record", version = "0.0.14" }
-keel-enforce = { package = "eero-keel-enforce", path = "crates/keel-enforce", version = "0.0.14" }
-keel-core = { package = "eero-keel-core", path = "crates/keel-core", version = "0.0.14" }
+keel-policy = { package = "eero-keel-policy", path = "crates/keel-policy", version = "0.0.15" }
+keel-record = { package = "eero-keel-record", path = "crates/keel-record", version = "0.0.15" }
+keel-enforce = { package = "eero-keel-enforce", path = "crates/keel-enforce", version = "0.0.15" }
+keel-core = { package = "eero-keel-core", path = "crates/keel-core", version = "0.0.15" }
 
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
