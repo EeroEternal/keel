@@ -26,7 +26,9 @@
 | Real kernel e2e | Thin |
 | `sandbox.toml` | Done |
 | Host integration guide | Done |
-| Hash-chain audit / Windows Job / netns | Not started |
+| Hash-chain audit | Done (0.0.13) |
+| Windows Job Objects | Done (0.0.14); AppContainer FS ACLs deferred |
+| netns | Not started |
 
 ---
 

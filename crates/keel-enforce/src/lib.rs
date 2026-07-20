@@ -4,6 +4,7 @@
 //! - [`NullBackend`] — records + soft checks only
 //! - [`ProcessGuardBackend`] — soft process spawn / FS guard
 //! - [`LocalProcessBackend`] — Landlock (Linux) / Seatbelt (macOS) via nono;
+//!   on **Windows**: Job Objects (+ restricted-token probe); soft FS policy.
 //!   default **isolate_apply** sandboxes children only (host stays clean).
 //!   Linux read-deny uses bubblewrap bind-over.
 
@@ -26,6 +27,9 @@ mod sandbox_child;
 
 #[cfg(all(feature = "kernel", target_os = "linux"))]
 mod bwrap;
+
+#[cfg(windows)]
+mod windows_sandbox;
 
 mod local_process;
 
@@ -56,4 +60,10 @@ pub use map_caps::{policy_to_capability_set, MapOptions};
 #[cfg(all(unix, feature = "kernel"))]
 pub use sandbox_child::{
     apply_kernel_here, apply_policy_file_and_ready, prepare_kernel, write_spawn_policy_file,
+};
+
+#[cfg(windows)]
+pub use windows_sandbox::{
+    capability_summary as windows_capability_summary, job_objects_supported,
+    try_create_restricted_token, Job as WindowsJob, WindowsSandboxOptions,
 };

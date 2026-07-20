@@ -5,6 +5,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)-style, versions
 
 ---
 
+## [0.0.14] — 2026-07-20
+
+### Added (Windows isolation)
+
+- **Windows Job Objects** on `LocalProcessBackend`: each child is assigned to a job with
+  `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Cancel / timeout / Drop terminate the **whole job**
+  (process tree), analogous to Unix process groups.
+- **Restricted token probe** (`CreateRestrictedToken` + `DISABLE_MAX_PRIVILEGE`) to confirm
+  APIs for a future `CreateProcessAsUser` path.
+- Options: `LocalProcessOptions.windows_job` / `windows_restricted_token` (default true).
+- Module `windows_sandbox` (cfg windows only); cross-checked against `x86_64-pc-windows-gnu`.
+
+### Note
+
+- **AppContainer path ACLs** (capability SIDs + profile + file grants) remain **deferred**.
+  Windows FS isolation is still soft policy + Job lifecycle; not Landlock-equivalent yet.
+- Host `create_confined` on Windows records Job capability for children (does not Landlock the host).
+
+---
+
 ## [0.0.13] — 2026-07-19
 
 ### Added

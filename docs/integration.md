@@ -10,7 +10,7 @@ Library imports still use `keel_core` / `keel_policy` / etc.
 
 ```toml
 [dependencies]
-eero-keel-core = "0.0.13"
+eero-keel-core = "0.0.14"
 ```
 
 ```bash
@@ -91,7 +91,7 @@ space.destroy().await?;
 | Level | Model | Use when |
 |-------|--------|----------|
 | **L0** | Soft policy + **`space.fs()`** | Cooperative host tools; not a hard boundary |
-| **L1** | Child kernel sandbox (`LocalProcess`, default `isolate_apply`) | Shell/tool subprocesses must not escape |
+| **L1** | Child OS isolation (`LocalProcess`, default `isolate_apply`) — Unix Landlock/Seatbelt, Windows Job | Shell/tool subprocesses / process trees |
 | **L2** | **`Space::create_confined`** (host Landlock/Seatbelt) | Dedicated agent process; no second policy in-process |
 | **L3** | Worktree / netns / microVM (partial / future) | Stronger multi-tenant isolation |
 

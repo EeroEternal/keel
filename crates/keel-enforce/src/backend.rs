@@ -217,19 +217,22 @@ impl SpawnRequest {
     }
 }
 
-/// Low-level child handle with process-group aware wait/kill.
+/// Low-level child handle with process-group / Job-aware wait/kill.
 ///
 /// Prefer [`keel_core::ManagedProcess`] from a [`Space`] so exit is audited.
 ///
 /// On [`Drop`], if the child is still running, Keel kills the **process group**
-/// (Unix) when `process_group` was enabled — not only the direct child — so shell
-/// grandchildren are less likely to leak after an unexpected drop.
+/// (Unix) or **Job Object** (Windows) when enabled — not only the direct child —
+/// so shell grandchildren are less likely to leak after an unexpected drop.
 pub struct SpawnedProcess {
     pub child: tokio::process::Child,
     started_at: Instant,
     process_group: bool,
     /// Set after a successful wait so Drop does not re-kill.
     finished: bool,
+    /// Windows Job Object holding this child (and its descendants).
+    #[cfg(windows)]
+    job: Option<crate::windows_sandbox::Job>,
 }
 
 impl SpawnedProcess {
@@ -239,6 +242,24 @@ impl SpawnedProcess {
             started_at: Instant::now(),
             process_group,
             finished: false,
+            #[cfg(windows)]
+            job: None,
+        }
+    }
+
+    /// Windows: attach an existing Job Object that already contains `child`.
+    #[cfg(windows)]
+    pub fn with_job(
+        child: tokio::process::Child,
+        process_group: bool,
+        job: crate::windows_sandbox::Job,
+    ) -> Self {
+        Self {
+            child,
+            started_at: Instant::now(),
+            process_group,
+            finished: false,
+            job: Some(job),
         }
     }
 
@@ -250,8 +271,14 @@ impl SpawnedProcess {
         self.process_group
     }
 
-    /// Kill the process group (Unix) or the direct child. Does not wait.
+    /// Kill the process group (Unix), Job Object (Windows), or the direct child.
     pub fn kill_tree(&mut self) -> std::io::Result<()> {
+        #[cfg(windows)]
+        {
+            if let Some(job) = self.job.as_ref() {
+                return job.terminate();
+            }
+        }
         kill_tree_of(&mut self.child, self.process_group)
     }
 
@@ -281,7 +308,7 @@ impl SpawnedProcess {
             }
             Ok(Err(e)) => Err(e),
             Err(_elapsed) => {
-                let _ = kill_tree_of(&mut self.child, self.process_group);
+                let _ = self.kill_tree();
                 let status = self.child.wait().await?;
                 self.finished = true;
                 Ok(ProcessExit::from_status(
@@ -293,10 +320,10 @@ impl SpawnedProcess {
         }
     }
 
-    /// Cancel: kill process group, wait, mark reason cancelled.
+    /// Cancel: kill process group / job, wait, mark reason cancelled.
     pub async fn cancel(mut self) -> std::io::Result<ProcessExit> {
         let started = self.started_at;
-        let _ = kill_tree_of(&mut self.child, self.process_group);
+        let _ = self.kill_tree();
         let status = self.child.wait().await?;
         self.finished = true;
         Ok(ProcessExit::from_status(
@@ -343,7 +370,6 @@ impl SpawnedProcess {
         use tokio::io::AsyncReadExt;
 
         let started = self.started_at;
-        let process_group = self.process_group;
 
         let stdout_pipe = self.child.stdout.take();
         let stderr_pipe = self.child.stderr.take();
@@ -373,7 +399,7 @@ impl SpawnedProcess {
                     Ok(Ok(s)) => (s, TerminationReason::Exited),
                     Ok(Err(e)) => return Err(e),
                     Err(_elapsed) => {
-                        let _ = kill_tree_of(&mut self.child, process_group);
+                        let _ = self.kill_tree();
                         let s = self.child.wait().await?;
                         (s, TerminationReason::TimedOut)
                     }
@@ -383,12 +409,12 @@ impl SpawnedProcess {
                 tokio::select! {
                     biased;
                     _ = token.cancelled() => {
-                        let _ = kill_tree_of(&mut self.child, process_group);
+                        let _ = self.kill_tree();
                         let s = self.child.wait().await?;
                         (s, TerminationReason::Cancelled)
                     }
                     _ = tokio::time::sleep(timeout) => {
-                        let _ = kill_tree_of(&mut self.child, process_group);
+                        let _ = self.kill_tree();
                         let s = self.child.wait().await?;
                         (s, TerminationReason::TimedOut)
                     }
@@ -432,8 +458,8 @@ impl Drop for SpawnedProcess {
                 // Already exited / reaped.
             }
             _ => {
-                // Kill whole process group so shell grandchildren do not linger.
-                let _ = kill_tree_of(&mut self.child, self.process_group);
+                // Kill process group (Unix) or Job Object (Windows).
+                let _ = self.kill_tree();
             }
         }
     }
@@ -453,6 +479,8 @@ fn kill_tree_of(child: &mut tokio::process::Child, process_group: bool) -> std::
             }
         }
     }
+    #[cfg(not(unix))]
+    let _ = process_group;
     child.start_kill()
 }
 

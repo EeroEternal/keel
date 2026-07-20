@@ -1,18 +1,26 @@
-//! `local-process` backend: Landlock (Linux) / Seatbelt (macOS) via nono.
+//! `local-process` backend: OS-level child isolation.
+//!
+//! | Platform | Mechanism |
+//! |----------|-----------|
+//! | Linux | Landlock + optional bwrap + seccomp (via nono) |
+//! | macOS | Seatbelt (via nono) |
+//! | Windows | **Job Objects** (`KILL_ON_JOB_CLOSE`) + soft FS policy; restricted-token probe |
 //!
 //! ## Default semantics (`isolate_apply = true`)
 //!
-//! - Host process is **not** sandboxed.
-//! - On `spawn`, the child applies the kernel sandbox in `pre_exec` (after fork).
+//! - Host process is **not** sandboxed (Unix kernel / Windows host token unchanged).
+//! - On `spawn`, children are isolated (Unix pre_exec sandbox / Windows Job).
 //! - On Linux, deny paths are enforced with **bubblewrap** bind-over (read-deny).
 //! - Parent keeps network for LLM/MCP.
 //! - `DenyAll`: child net blocked (kernel Blocked / Linux seccomp).
 //! - `Allowlist`: parent runs a localhost CONNECT proxy; children get proxy env
 //!   and kernel `ProxyOnly` so they may only dial the proxy port.
 //!
-//! ## Legacy (`isolate_apply = false`)
+//! ## Legacy / confined (`isolate_apply = false`)
 //!
-//! - `apply()` sandboxes the **current** process (irreversible, one policy per process).
+//! - Unix: `apply()` sandboxes the **current** process (irreversible).
+//! - Windows: host cannot be put in a Job that kills itself usefully; apply records
+//!   Job capability and still isolates **children**.
 
 use crate::backend::{base_command, BackendInfo, EnforceBackend, SpawnRequest, SpawnedProcess};
 use crate::error::{EnforceError, EnforceResult};
@@ -35,9 +43,9 @@ static KERNEL_APPLIED_POLICY: OnceLock<String> = OnceLock::new();
 /// Options for [`LocalProcessBackend`].
 #[derive(Debug, Clone)]
 pub struct LocalProcessOptions {
-    /// Fail if the platform cannot enforce kernel FS (default true).
+    /// Fail if the platform cannot enforce kernel FS / Job isolation (default true).
     pub require_kernel: bool,
-    /// Block network for the sandboxed process via nono (default false).
+    /// Block network for the sandboxed process via nono (default false). Unix mainly.
     pub block_process_network: bool,
     /// If true (default), apply kernel sandbox only in children, not the host.
     pub isolate_apply: bool,
@@ -45,6 +53,10 @@ pub struct LocalProcessOptions {
     /// if available (default true). When denials exist, bwrap is missing, and
     /// [`Self::require_kernel`] is true, apply fails closed.
     pub auto_bwrap: bool,
+    /// Windows: place each child in a Job Object (default true).
+    pub windows_job: bool,
+    /// Windows: probe/create restricted tokens (default true; spawn still Job-based).
+    pub windows_restricted_token: bool,
 }
 
 impl Default for LocalProcessOptions {
@@ -54,6 +66,8 @@ impl Default for LocalProcessOptions {
             block_process_network: false,
             isolate_apply: true,
             auto_bwrap: true,
+            windows_job: true,
+            windows_restricted_token: true,
         }
     }
 }
@@ -120,6 +134,8 @@ impl EnforceBackend for LocalProcessBackend {
     fn info(&self) -> BackendInfo {
         BackendInfo {
             name: "local-process",
+            // Unix Landlock/Seatbelt only. Windows Jobs are process-tree isolation
+            // (soft FS policy still applies); full AppContainer FS ACLs are deferred.
             kernel_fs: cfg!(all(
                 feature = "kernel",
                 any(target_os = "linux", target_os = "macos")
@@ -142,9 +158,17 @@ impl EnforceBackend for LocalProcessBackend {
             return self.apply_on_host(policy, sink).await;
         }
 
-        #[cfg(not(all(unix, feature = "kernel")))]
+        #[cfg(all(windows, feature = "kernel"))]
         {
-            let msg = "local-process kernel backend requires unix + feature `kernel`";
+            return self.apply_windows(policy, sink).await;
+        }
+
+        #[cfg(not(any(
+            all(unix, feature = "kernel"),
+            all(windows, feature = "kernel")
+        )))]
+        {
+            let msg = "local-process kernel backend requires unix/windows + feature `kernel`";
             if self.opts.require_kernel {
                 return Err(EnforceError::Unsupported(msg.into()));
             }
@@ -215,7 +239,15 @@ impl EnforceBackend for LocalProcessBackend {
             return self.spawn_sandboxed(policy, req).await;
         }
 
-        #[cfg(not(all(unix, feature = "kernel")))]
+        #[cfg(all(windows, feature = "kernel"))]
+        {
+            return self.spawn_windows(policy, req).await;
+        }
+
+        #[cfg(not(any(
+            all(unix, feature = "kernel"),
+            all(windows, feature = "kernel")
+        )))]
         {
             let process_group = req.process_group;
             let mut cmd = base_command(&req);
@@ -230,6 +262,144 @@ impl EnforceBackend for LocalProcessBackend {
             proxy.shutdown();
         }
         Ok(())
+    }
+}
+
+#[cfg(all(windows, feature = "kernel"))]
+impl LocalProcessBackend {
+    async fn apply_windows(
+        &self,
+        policy: &Policy,
+        sink: Arc<dyn RecordSink>,
+    ) -> EnforceResult<()> {
+        let win_opts = crate::windows_sandbox::WindowsSandboxOptions {
+            use_job: self.opts.windows_job,
+            use_restricted_token: self.opts.windows_restricted_token,
+        };
+
+        if self.opts.windows_job {
+            match crate::windows_sandbox::Job::create() {
+                Ok(job) => {
+                    // Probe only — per-child jobs are created at spawn.
+                    drop(job);
+                }
+                Err(e) => {
+                    let msg = format!("Windows Job Object unavailable: {e}");
+                    if self.opts.require_kernel {
+                        return Err(EnforceError::Unsupported(msg));
+                    }
+                    warn!("{msg}; soft process-guard only");
+                }
+            }
+        }
+
+        if self.opts.windows_restricted_token {
+            match crate::windows_sandbox::try_create_restricted_token() {
+                Ok(_tok) => {
+                    info!("Windows restricted token API available");
+                }
+                Err(e) => {
+                    warn!(error = %e, "Windows restricted token probe failed (continuing with jobs)");
+                }
+            }
+        }
+
+        // Optional egress proxy for allowlists (proxy-aware tools).
+        let mut egress_note = String::new();
+        if matches!(policy.network, NetworkPolicy::Allowlist(_)) {
+            let proxy =
+                crate::egress_proxy::EgressProxy::start(policy.network.clone()).await?;
+            egress_note = format!("egress proxy on {}", proxy.proxy_url());
+            *self.egress.lock().await = Some(Arc::new(proxy));
+        }
+
+        if matches!(policy.network, NetworkPolicy::DenyAll) || self.opts.block_process_network {
+            self.restrict_child_net.store(true, Ordering::Release);
+        }
+
+        self.applied.store(true, Ordering::Release);
+        let caps = crate::windows_sandbox::capability_summary(&win_opts);
+        let msg = if egress_note.is_empty() {
+            format!("local-process Windows: {caps}")
+        } else {
+            format!("local-process Windows: {caps}; {egress_note}")
+        };
+        info!(policy_id = %policy.id, "{msg}");
+        let _ = sink
+            .emit(RecordEvent::new(
+                SpaceId::from_string("pending"),
+                policy.id.clone(),
+                policy.task_id.clone(),
+                EventKind::Note { message: msg },
+            ))
+            .await;
+        Ok(())
+    }
+
+    async fn spawn_windows(
+        &self,
+        policy: &Policy,
+        mut req: SpawnRequest,
+    ) -> EnforceResult<SpawnedProcess> {
+        // Soft FS: program path when absolute.
+        let prog = Path::new(&req.program);
+        if prog.is_absolute() && !process_guard::soft_fs_allowed(policy, prog, false) {
+            return Err(EnforceError::Denied(format!(
+                "program path not readable under policy: {}",
+                prog.display()
+            )));
+        }
+
+        // Inject egress proxy env for allowlisted spaces.
+        {
+            let guard = self.egress.lock().await;
+            if let Some(proxy) = guard.as_ref() {
+                for (k, v) in proxy.env_vars() {
+                    if !req.env.iter().any(|(ek, _)| ek == &k) {
+                        req.env.push((k, v));
+                    }
+                }
+            }
+        }
+
+        let process_group = req.process_group;
+        let mut cmd = base_command(&req);
+        let child = cmd.spawn()?;
+
+        if self.opts.windows_job {
+            match crate::windows_sandbox::Job::create() {
+                Ok(job) => {
+                    if let Some(pid) = child.id() {
+                        if let Err(e) = job.assign_pid(pid) {
+                            warn!(error = %e, pid, "AssignProcessToJobObject failed");
+                            if self.opts.require_kernel {
+                                // Best-effort kill the orphaned child.
+                                let mut orphan = SpawnedProcess::new(child, process_group);
+                                let _ = orphan.kill_tree();
+                                return Err(EnforceError::ApplyFailed(format!(
+                                    "failed to assign child to Job Object: {e}"
+                                )));
+                            }
+                            return Ok(SpawnedProcess::new(child, process_group));
+                        }
+                    }
+                    return Ok(SpawnedProcess::with_job(child, process_group, job));
+                }
+                Err(e) => {
+                    if self.opts.require_kernel {
+                        let mut orphan = SpawnedProcess::new(child, process_group);
+                        let _ = orphan.kill_tree();
+                        return Err(EnforceError::ApplyFailed(format!(
+                            "CreateJobObject failed: {e}"
+                        )));
+                    }
+                    warn!(error = %e, "CreateJobObject failed; child without job");
+                    return Ok(SpawnedProcess::new(child, process_group));
+                }
+            }
+        }
+
+        Ok(SpawnedProcess::new(child, process_group))
     }
 }
 
