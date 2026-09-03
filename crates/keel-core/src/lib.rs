@@ -14,12 +14,13 @@ pub use space_fs::{SpaceFs, SpacePathMeta};
 pub use tokio_util::sync::CancellationToken;
 
 pub use keel_enforce::{
-    local_process as backend_local_process,
+    agentcell as backend_agentcell, local_process as backend_local_process,
     local_process_confined as backend_local_process_confined,
-    process_guard as backend_process_guard, soft_fs_allowed, soft_fs_resolve, worktree_sandboxed,
-    worktree_soft, BackendInfo, EnforceBackend, LocalProcessBackend, LocalProcessOptions,
-    NullBackend, ProcessExit, ProcessGuardBackend, SpawnRequest, SpawnedProcess, StdioMode,
-    TerminationReason, WorktreeBackend, WorktreeOptions,
+    process_guard as backend_process_guard, soft_fs_allowed, soft_fs_resolve,
+    worktree_agentcell as backend_worktree_agentcell, worktree_sandboxed, worktree_soft,
+    AgentCellBackend, AgentCellOptions, BackendInfo, EnforceBackend, LocalProcessBackend,
+    LocalProcessOptions, NullBackend, ProcessExit, ProcessGuardBackend, SpawnRequest,
+    SpawnedProcess, StdioMode, TerminationReason, WorktreeBackend, WorktreeOptions,
 };
 
 #[cfg(unix)]

@@ -34,13 +34,18 @@ mod windows_sandbox;
 mod windows_appcontainer;
 
 mod local_process;
+mod agentcell;
 
+pub use agentcell::{
+    agentcell_available, is_inside_agentcell, which_agentcell, AgentCellBackend, AgentCellOptions,
+};
 pub use backend::{
     BackendInfo, EnforceBackend, ProcessExit, SpawnRequest, SpawnedProcess, StdioMode,
     TerminationReason,
 };
 pub use compose::{
-    local_process, local_process_confined, process_guard, worktree_sandboxed, worktree_soft,
+    agentcell, local_process, local_process_confined, process_guard, worktree_agentcell,
+    worktree_sandboxed, worktree_soft,
 };
 pub use credentials::{
     grant_names, inject_into_env, resolve_credentials, revoke_resolved, CredentialSourceKind,

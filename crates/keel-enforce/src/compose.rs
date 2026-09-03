@@ -39,6 +39,20 @@ pub fn process_guard() -> Arc<dyn EnforceBackend> {
     Arc::new(ProcessGuardBackend::new())
 }
 
+/// AgentCell unprivileged Linux sandbox backend.
+pub fn agentcell(opts: crate::agentcell::AgentCellOptions) -> Arc<dyn EnforceBackend> {
+    Arc::new(crate::agentcell::AgentCellBackend::with_options(opts))
+}
+
+/// Worktree + AgentCell sandbox backend.
+pub fn worktree_agentcell(
+    worktree: WorktreeOptions,
+    agentcell_opts: crate::agentcell::AgentCellOptions,
+) -> Arc<dyn EnforceBackend> {
+    let inner = Arc::new(crate::agentcell::AgentCellBackend::with_options(agentcell_opts));
+    Arc::new(WorktreeBackend::with_inner(inner, worktree))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -58,5 +72,15 @@ mod tests {
 
         assert_eq!(local_process(LocalProcessOptions::default()).info().name, "local-process");
         assert_eq!(process_guard().info().name, "process-guard");
+
+        let ac = agentcell(crate::agentcell::AgentCellOptions::default());
+        assert_eq!(ac.info().name, "agentcell");
+        assert!(ac.info().kernel_fs);
+
+        let wt_ac = worktree_agentcell(
+            WorktreeOptions::default(),
+            crate::agentcell::AgentCellOptions::default(),
+        );
+        assert_eq!(wt_ac.info().name, "local-worktree");
     }
 }
