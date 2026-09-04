@@ -54,6 +54,10 @@ pub struct AgentCellOptions {
     pub pids_limit: Option<u32>,
     /// Custom packed rootfs tree directory.
     pub rootfs: Option<PathBuf>,
+    /// Specific egress allowlist destination "HOST:PORT" for fine-grained network filtering.
+    pub egress: Option<String>,
+    /// Enable AgentLSM enforcement (e.g. deny /etc/shadow, hot policy reload).
+    pub secure: bool,
 }
 
 impl Default for AgentCellOptions {
@@ -64,6 +68,8 @@ impl Default for AgentCellOptions {
             cpu_limit: None,
             pids_limit: Some(256),
             rootfs: None,
+            egress: None,
+            secure: true,
         }
     }
 }
@@ -136,54 +142,9 @@ impl EnforceBackend for AgentCellBackend {
 
         let mut cmd = Command::new(sand_bin);
 
-        // 1. Working directory
         let cwd = req.cwd.as_deref().unwrap_or(&policy.workspace);
-        cmd.arg("--workdir").arg(cwd);
-
-        // 2. Resource limits (cgroup v2)
-        if let Some(mem) = &self.options.memory_limit {
-            cmd.arg("--mem").arg(mem);
-        }
-        if let Some(cpu) = self.options.cpu_limit {
-            cmd.arg("--cpu").arg(cpu.to_string());
-        }
-        if let Some(pids) = self.options.pids_limit {
-            cmd.arg("--pids").arg(pids.to_string());
-        }
-
-        // 3. Network policy
-        match &policy.network {
-            NetworkPolicy::Unrestricted => {
-                cmd.arg("--net").arg("host");
-            }
-            NetworkPolicy::DenyAll => {
-                cmd.arg("--net").arg("none");
-            }
-            NetworkPolicy::Allowlist(_) => {
-                // In allowlist mode, child attaches to host net with proxy environment variables
-                cmd.arg("--net").arg("host");
-            }
-        }
-
-        // 4. Deny paths (Landlock & BPF LSM)
-        for deny in policy.deny_paths() {
-            if !deny.glob {
-                let abs = if deny.path.is_absolute() {
-                    deny.path.clone()
-                } else {
-                    policy.workspace.join(&deny.path)
-                };
-                cmd.arg("--deny").arg(abs);
-            }
-        }
-
-        // 5. Optional rootfs
-        if let Some(rootfs) = &self.options.rootfs {
-            cmd.arg("--rootfs").arg(rootfs);
-        }
-
-        // 6. Child program and arguments
-        cmd.arg("--").arg(&req.program).args(&req.args);
+        let args = build_sand_args(&self.options, policy, cwd, &req.program, &req.args);
+        cmd.args(&args);
 
         // Inherit or pipe stdio
         cmd.stdin(req.stdin.to_std())
@@ -210,9 +171,98 @@ impl EnforceBackend for AgentCellBackend {
     }
 }
 
+/// Helper function to construct CLI arguments for `sand` from options and policy.
+pub fn build_sand_args(
+    options: &AgentCellOptions,
+    policy: &Policy,
+    cwd: &Path,
+    program: &str,
+    args: &[String],
+) -> Vec<String> {
+    let mut out = Vec::new();
+
+    // 1. Working directory
+    out.push("--workdir".into());
+    out.push(cwd.to_string_lossy().to_string());
+
+    // 2. Resource limits (cgroup v2)
+    if let Some(mem) = &options.memory_limit {
+        out.push("--mem".into());
+        out.push(mem.clone());
+    }
+    if let Some(cpu) = options.cpu_limit {
+        out.push("--cpu".into());
+        out.push(cpu.to_string());
+    }
+    if let Some(pids) = options.pids_limit {
+        out.push("--pids".into());
+        out.push(pids.to_string());
+    }
+
+    // 3. Network policy & Egress
+    match &policy.network {
+        NetworkPolicy::Unrestricted => {
+            out.push("--net".into());
+            out.push("host".into());
+        }
+        NetworkPolicy::DenyAll => {
+            out.push("--net".into());
+            out.push("none".into());
+        }
+        NetworkPolicy::Allowlist(rules) => {
+            if let Some(egress) = &options.egress {
+                out.push("--egress".into());
+                out.push(egress.clone());
+            } else if let Some(rule) = rules.first() {
+                let target = if let Some(port) = rule.port {
+                    format!("{}:{}", rule.host, port)
+                } else {
+                    format!("{}:443", rule.host)
+                };
+                out.push("--egress".into());
+                out.push(target);
+            } else {
+                out.push("--net".into());
+                out.push("host".into());
+            }
+        }
+    }
+
+    // 4. Secure mode (AgentLSM enforcement)
+    if options.secure {
+        out.push("--secure".into());
+    }
+
+    // 5. Deny paths (Landlock & BPF LSM)
+    for deny in policy.deny_paths() {
+        if !deny.glob {
+            let abs = if deny.path.is_absolute() {
+                deny.path.clone()
+            } else {
+                policy.workspace.join(&deny.path)
+            };
+            out.push("--deny".into());
+            out.push(abs.to_string_lossy().to_string());
+        }
+    }
+
+    // 6. Optional rootfs
+    if let Some(rootfs) = &options.rootfs {
+        out.push("--rootfs".into());
+        out.push(rootfs.to_string_lossy().to_string());
+    }
+
+    // 7. Child program and arguments
+    out.push("--".into());
+    out.push(program.to_string());
+    out.extend(args.iter().cloned());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use keel_policy::NetworkRule;
 
     #[test]
     fn agentcell_backend_info() {
@@ -230,6 +280,59 @@ mod tests {
         assert_eq!(opts.pids_limit, Some(256));
         assert!(opts.memory_limit.is_none());
         assert!(opts.cpu_limit.is_none());
+        assert!(opts.egress.is_none());
+        assert!(opts.secure);
+    }
+
+    #[test]
+    fn build_sand_args_unrestricted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = keel_policy::profile_workspace(tmp.path()).unwrap();
+        let opts = AgentCellOptions {
+            memory_limit: Some("1G".into()),
+            cpu_limit: Some(2),
+            pids_limit: Some(128),
+            egress: None,
+            secure: true,
+            ..Default::default()
+        };
+
+        let args = build_sand_args(
+            &opts,
+            &policy,
+            tmp.path(),
+            "echo",
+            &["hello".into(), "world".into()],
+        );
+
+        assert!(args.contains(&"--workdir".to_string()));
+        assert!(args.contains(&"--mem".to_string()));
+        assert!(args.contains(&"1G".to_string()));
+        assert!(args.contains(&"--cpu".to_string()));
+        assert!(args.contains(&"2".to_string()));
+        assert!(args.contains(&"--pids".to_string()));
+        assert!(args.contains(&"128".to_string()));
+        assert!(args.contains(&"--net".to_string()));
+        assert!(args.contains(&"host".to_string()));
+        assert!(args.contains(&"--secure".to_string()));
+        assert!(args.contains(&"--".to_string()));
+        assert_eq!(args.last().unwrap(), "world");
+    }
+
+    #[test]
+    fn build_sand_args_with_egress() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut policy = keel_policy::profile_workspace(tmp.path()).unwrap();
+        policy.network = NetworkPolicy::Allowlist(vec![NetworkRule::host_port("api.openai.com", 443)]);
+
+        let opts = AgentCellOptions {
+            egress: Some("api.openai.com:443".into()),
+            ..Default::default()
+        };
+
+        let args = build_sand_args(&opts, &policy, tmp.path(), "curl", &["https://api.openai.com".into()]);
+        assert!(args.contains(&"--egress".to_string()));
+        assert!(args.contains(&"api.openai.com:443".to_string()));
     }
 
     #[tokio::test]
